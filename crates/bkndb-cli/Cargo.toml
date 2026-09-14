@@ -1,0 +1,11 @@
+[package]
+name = "bkndb-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bkndb-cli"
+path = "src/main.rs"
+
+[dependencies]
+bkndb = { path = "../bkndb" }

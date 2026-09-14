@@ -1,0 +1,10 @@
+[package]
+name = "bkndb-storage-mem"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bkndb-core = { path = "../bkndb-core" }
+
+[dev-dependencies]
+bkndb-core = { path = "../bkndb-core", features = ["test-util", "graph", "relational"] }

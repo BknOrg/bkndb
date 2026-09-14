@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bkndb-core",
+    "crates/bkndb-storage-redb",
+    "crates/bkndb-storage-mem",
+    "crates/bkndb-storage-lsm",
+    "crates/bkndb",
+    "crates/bkndb-ffi",
+    "crates/bkndb-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+redb = "2"
+crc32fast = "1"
+tempfile = "3"

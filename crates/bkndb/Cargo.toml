@@ -1,0 +1,21 @@
+[package]
+name = "bkndb"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bkndb-core = { path = "../bkndb-core" }
+bkndb-storage-redb = { path = "../bkndb-storage-redb", optional = true }
+bkndb-storage-mem = { path = "../bkndb-storage-mem", optional = true }
+bkndb-storage-lsm = { path = "../bkndb-storage-lsm", optional = true }
+
+[features]
+default = ["redb-backend", "mem-backend", "graph", "relational-layer"]
+redb-backend = ["dep:bkndb-storage-redb"]
+mem-backend = ["dep:bkndb-storage-mem"]
+lsm-backend = ["dep:bkndb-storage-lsm"]
+graph = ["bkndb-core/graph"]
+relational-layer = ["bkndb-core/relational"]
+
+[dev-dependencies]
+tempfile = { workspace = true }

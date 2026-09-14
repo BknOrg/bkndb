@@ -1,0 +1,18 @@
+[package]
+name = "bkndb-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+bincode = { version = "1.3", optional = true }
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+serde = ["dep:serde"]
+value = ["dep:serde", "dep:bincode"]
+graph = ["value"]
+relational = ["value"]
+test-util = []

@@ -1,0 +1,10 @@
+[package]
+name = "bkndb-ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+bkndb-core = { path = "../bkndb-core" }

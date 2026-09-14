@@ -1,0 +1,12 @@
+[package]
+name = "bkndb-storage-redb"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bkndb-core = { path = "../bkndb-core" }
+redb = { workspace = true }
+
+[dev-dependencies]
+bkndb-core = { path = "../bkndb-core", features = ["test-util", "graph", "relational"] }
+tempfile = "3"
