@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use crate::relational::codec::{
     base_table, decode_row, decode_sortable, encode_row, index_key, index_table,
-    lower_bound_bytes, next_pk, pk_from_index_key, sortable_encode, upper_bound_bytes,
+    lower_bound_bytes, next_pk, pk_from_index_key, reserve_pks, sortable_encode,
+    sortable_str_prefix_bounds, upper_bound_bytes,
 };
 use crate::relational::query::{DeleteQuery, SelectQuery, UpdateQuery};
 use crate::relational::schema::RelSchema;
@@ -113,6 +114,15 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
         Ok(pk)
     }
 
+    /// Inserts multiple rows in a single batch, reserving PKs in one counter update
+    /// if auto-increment is enabled.
+    pub fn insert_bulk(&self, rows: impl IntoIterator<Item = Properties>) -> Result<Vec<PropValue>, BknError> {
+        let mut wtx = self.db.backend.begin_write()?;
+        let pks = insert_bulk_in(&mut wtx, self.schema, rows)?;
+        wtx.commit()?;
+        Ok(pks)
+    }
+
     /// Inserts a row under an explicit, caller-supplied PK — the mechanism
     /// for linking a relational row to an existing id from elsewhere (e.g.
     /// a graph [`crate::graph::NodeId`]). Rejected on an auto-increment
@@ -125,6 +135,14 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
         }
         let mut wtx = self.db.backend.begin_write()?;
         write_row_in(&mut wtx, self.schema, &pk, &values)?;
+        wtx.commit()?;
+        Ok(())
+    }
+
+    /// Inserts multiple rows with caller-supplied PKs in a single batch.
+    pub fn insert_with_pk_bulk(&self, rows: impl IntoIterator<Item = (PropValue, Properties)>) -> Result<(), BknError> {
+        let mut wtx = self.db.backend.begin_write()?;
+        insert_with_pk_bulk_in(&mut wtx, self.schema, rows)?;
         wtx.commit()?;
         Ok(())
     }
@@ -173,6 +191,30 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
         index_lookup_range_in(&rtx, self.schema, column, start, end)
     }
 
+    /// Rows whose `column` string value starts with `prefix`, using that
+    /// column's secondary index if available, falling back to a full scan.
+    pub fn select_prefix(&self, column: &str, prefix: &str) -> Result<Vec<Row>, BknError> {
+        let rtx = self.db.backend.begin_read()?;
+        if self.schema.is_indexed(column) {
+            index_lookup_prefix_in(&rtx, self.schema, column, prefix)
+        } else {
+            let rows = scan_all_in(&rtx, self.schema)?;
+            Ok(rows
+                .into_iter()
+                .filter(|r| match r.get(self.schema, column) {
+                    Some(PropValue::Str(s)) => s.starts_with(prefix),
+                    _ => false,
+                })
+                .collect())
+        }
+    }
+
+    pub(crate) fn index_lookup_prefix(&self, column: &str, prefix: &str) -> Result<Vec<Row>, BknError> {
+        let rtx = self.db.backend.begin_read()?;
+        index_lookup_prefix_in(&rtx, self.schema, column, prefix)
+    }
+
+
     pub(crate) fn delete_row(&self, pk: &PropValue) -> Result<bool, BknError> {
         let mut wtx = self.db.backend.begin_write()?;
         let changed = delete_row_in(&mut wtx, self.schema, pk)?;
@@ -219,6 +261,54 @@ pub(crate) fn write_row_in<W: StorageWriteTx>(
         if let Some(v) = row.get(schema, col) {
             wtx.put(index_table(schema, col), &index_key(v, pk)?, &[])?;
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn insert_bulk_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    schema: &RelSchema,
+    rows: impl IntoIterator<Item = Properties>,
+) -> Result<Vec<PropValue>, BknError> {
+    let items: Vec<Properties> = rows.into_iter().collect();
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut pks = Vec::with_capacity(items.len());
+    if schema.auto_increment_pk {
+        let start_pk = reserve_pks(wtx, schema, items.len() as u64)?;
+        for (i, values) in items.into_iter().enumerate() {
+            let pk = PropValue::Int(start_pk + i as i64);
+            write_row_in(wtx, schema, &pk, &values)?;
+            pks.push(pk);
+        }
+    } else {
+        let col = schema.primary_key;
+        for values in items.into_iter() {
+            let pk = values
+                .get(col)
+                .cloned()
+                .ok_or_else(|| BknError::Encoding(format!("missing primary key column '{col}'")))?;
+            write_row_in(wtx, schema, &pk, &values)?;
+            pks.push(pk);
+        }
+    }
+    Ok(pks)
+}
+
+pub(crate) fn insert_with_pk_bulk_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    schema: &RelSchema,
+    rows: impl IntoIterator<Item = (PropValue, Properties)>,
+) -> Result<(), BknError> {
+    if schema.auto_increment_pk {
+        return Err(BknError::Encoding(
+            "insert_with_pk_bulk cannot be used on an auto-increment schema".to_string(),
+        ));
+    }
+    for (pk, values) in rows {
+        write_row_in(wtx, schema, &pk, &values)?;
     }
     Ok(())
 }
@@ -278,6 +368,37 @@ pub(crate) fn index_lookup_range_in<R: StorageReadTx>(
     )?;
     resolve_index_rows_in(rtx, schema, column, rows)
 }
+
+pub(crate) fn index_lookup_prefix_in<R: StorageReadTx>(
+    rtx: &R,
+    schema: &RelSchema,
+    column: &str,
+    prefix: &str,
+) -> Result<Vec<Row>, BknError> {
+    let col = schema
+        .column(column)
+        .ok_or_else(|| BknError::Encoding(format!("no such column '{column}'")))?;
+    if col.kind != crate::relational::schema::ColumnKind::Str {
+        return Err(BknError::Encoding(format!(
+            "prefix search is only supported on Str columns, '{column}' is {:?}",
+            col.kind
+        )));
+    }
+    let (lo_bound, hi_bound) = sortable_str_prefix_bounds(prefix);
+    let lo_ref = match &lo_bound {
+        Bound::Included(b) => Bound::Included(b.as_slice()),
+        Bound::Excluded(b) => Bound::Excluded(b.as_slice()),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+    let hi_ref = match &hi_bound {
+        Bound::Included(b) => Bound::Included(b.as_slice()),
+        Bound::Excluded(b) => Bound::Excluded(b.as_slice()),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+    let rows = rtx.range(index_table(schema, column), lo_ref, hi_ref)?;
+    resolve_index_rows_in(rtx, schema, column, rows)
+}
+
 
 fn resolve_index_rows_in<R: StorageReadTx>(
     rtx: &R,

@@ -10,6 +10,7 @@ use crate::{BknError, StorageBackend};
 enum Predicate {
     Eq(String, PropValue),
     Range(String, Bound<PropValue>, Bound<PropValue>),
+    Prefix(String, String),
 }
 
 impl Predicate {
@@ -17,6 +18,7 @@ impl Predicate {
         match self {
             Predicate::Eq(c, _) => c,
             Predicate::Range(c, _, _) => c,
+            Predicate::Prefix(c, _) => c,
         }
     }
 }
@@ -54,6 +56,10 @@ fn predicate_matches(schema: &RelSchema, pred: &Predicate, row: &Row) -> Result<
             Some(v) => Ok(bound_ok(v, start, true)? && bound_ok(v, end, false)?),
             None => Ok(false),
         },
+        Predicate::Prefix(col, prefix) => match row.get(schema, col) {
+            Some(PropValue::Str(s)) => Ok(s.starts_with(prefix)),
+            _ => Ok(false),
+        },
     }
 }
 
@@ -67,8 +73,8 @@ fn predicates_match(schema: &RelSchema, predicates: &[Predicate], row: &Row) -> 
 }
 
 /// Picks candidate rows using the first predicate that names an indexed
-/// column (exact-match predicates preferred over range predicates, since an
-/// eq lookup is a tighter scan); falls back to a full table scan if no
+/// column (exact-match predicates preferred over prefix or range predicates,
+/// since an eq lookup is a tighter scan); falls back to a full table scan if no
 /// predicate is indexed. The chosen predicate (and every other predicate)
 /// is still re-applied as an in-Rust filter afterward — this is a
 /// deliberately simple "pick one index, then filter" strategy, not a
@@ -80,6 +86,13 @@ fn candidate_rows<B: StorageBackend>(table: &RelTable<'_, B>, predicates: &[Pred
     {
         let Predicate::Eq(col, val) = p else { unreachable!() };
         return table.index_lookup_eq(col, val);
+    }
+    if let Some(p) = predicates
+        .iter()
+        .find(|p| matches!(p, Predicate::Prefix(col, _) if table.schema.is_indexed(col)))
+    {
+        let Predicate::Prefix(col, prefix) = p else { unreachable!() };
+        return table.index_lookup_prefix(col, prefix);
     }
     if let Some(p) = predicates
         .iter()
@@ -108,6 +121,13 @@ impl<'a, B: StorageBackend> SelectQuery<'a, B> {
 
     pub fn where_eq(mut self, column: &str, value: PropValue) -> Self {
         self.predicates.push(Predicate::Eq(column.to_string(), value));
+        self
+    }
+
+    /// Prefix predicate on a string column — leverages secondary index range scan
+    /// if the column is indexed, otherwise filters during table scan.
+    pub fn where_prefix(mut self, column: &str, prefix: &str) -> Self {
+        self.predicates.push(Predicate::Prefix(column.to_string(), prefix.to_string()));
         self
     }
 
@@ -169,6 +189,11 @@ impl<'a, B: StorageBackend> UpdateQuery<'a, B> {
         self
     }
 
+    pub fn where_prefix(mut self, column: &str, prefix: &str) -> Self {
+        self.predicates.push(Predicate::Prefix(column.to_string(), prefix.to_string()));
+        self
+    }
+
     pub fn set(mut self, column: &str, value: PropValue) -> Self {
         self.sets.push((column.to_string(), value));
         self
@@ -219,6 +244,12 @@ impl<'a, B: StorageBackend> DeleteQuery<'a, B> {
         self.predicates.push(Predicate::Eq(column.to_string(), value));
         self
     }
+
+    pub fn where_prefix(mut self, column: &str, prefix: &str) -> Self {
+        self.predicates.push(Predicate::Prefix(column.to_string(), prefix.to_string()));
+        self
+    }
+
 
     /// Deletes every row matching the predicates, returning how many rows
     /// were removed. Matching zero rows is not an error — see

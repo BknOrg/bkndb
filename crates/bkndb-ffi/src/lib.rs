@@ -1,4 +1,12 @@
-//! Placeholder for UniFFI / C-ABI bindings (see milestone M6 in
-//! implementation_plan.md). Intentionally empty for M1 — this crate exists
-//! only so the workspace's member list and future CI matrix already have
-//! the right shape before FFI work begins.
+//! UniFFI multi-platform interface for BknDb, exposing the core graph database,
+//! relational metadata layer, and batch sync engine to Kotlin (Android) and Swift (iOS).
+
+pub mod engine;
+pub mod error;
+pub mod types;
+
+pub use engine::BknDbEngine;
+pub use error::FfiBknError;
+pub use types::*;
+
+uniffi::setup_scaffolding!();

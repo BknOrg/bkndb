@@ -28,6 +28,13 @@ pub fn node_key(id: NodeId) -> [u8; 8] {
     id.0.to_be_bytes()
 }
 
+pub fn decode_node_id(bytes: &[u8]) -> Result<NodeId, crate::BknError> {
+    let arr: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| crate::BknError::Encoding("invalid node key length".into()))?;
+    Ok(NodeId(u64::from_be_bytes(arr)))
+}
+
 pub fn edge_key(id: EdgeId) -> [u8; 8] {
     id.0.to_be_bytes()
 }

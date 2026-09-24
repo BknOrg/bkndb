@@ -28,6 +28,35 @@ impl<R: StorageReadTx> DbReadBatch<R> {
     pub fn relational(&self) -> crate::relational::RelReadView<'_, R> {
         crate::relational::RelReadView::new(&self.rtx)
     }
+
+    #[cfg(all(feature = "graph", feature = "relational"))]
+    pub fn join_nodes_with_table(
+        &self,
+        nodes: &[crate::graph::NodeId],
+        schema: &crate::relational::RelSchema,
+    ) -> Result<Vec<crate::hybrid::JoinedNode>, BknError> {
+        crate::hybrid::join_nodes_with_table(&self.rtx, nodes, schema)
+    }
+
+    #[cfg(all(feature = "graph", feature = "relational"))]
+    pub fn join_nodes_by_column(
+        &self,
+        nodes: &[crate::graph::NodeId],
+        schema: &crate::relational::RelSchema,
+        foreign_key_col: &str,
+    ) -> Result<Vec<crate::hybrid::JoinedNodeRows>, BknError> {
+        crate::hybrid::join_nodes_by_column(&self.rtx, nodes, schema, foreign_key_col)
+    }
+
+    #[cfg(all(feature = "graph", feature = "relational"))]
+    pub fn join_rows_with_nodes(
+        &self,
+        rows: &[crate::relational::Row],
+        schema: &crate::relational::RelSchema,
+        node_id_column: &str,
+    ) -> Result<Vec<(crate::relational::Row, Option<crate::graph::NodeRecord>)>, BknError> {
+        crate::hybrid::join_rows_with_nodes(&self.rtx, rows, schema, node_id_column)
+    }
 }
 
 impl<B: StorageBackend> crate::db::Db<B> {

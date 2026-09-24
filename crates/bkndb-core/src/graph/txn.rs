@@ -6,8 +6,9 @@
 
 use crate::graph::codec::{ADJ_IN, ADJ_OUT};
 use crate::graph::db::{
-    create_edge_in, create_node_in, delete_node_in, get_edge_in, get_node_in, neighbors_any_in,
-    neighbors_in_in, neighbors_out_in, update_edge_properties_in,
+    create_edge_in, create_edges_bulk_in, create_node_in, create_nodes_bulk_in, delete_node_in,
+    get_edge_in, get_node_in, neighbors_any_in, neighbors_in_in, neighbors_out_in,
+    update_edge_properties_in,
 };
 use crate::graph::model::{EdgeId, EdgeRecord, NodeId, NodeRecord, Properties};
 use crate::{BknError, StorageReadTx, StorageWriteTx};
@@ -53,6 +54,14 @@ impl<'s, W: StorageWriteTx> BatchGraph<'s, W> {
         create_node_in(self.wtx, label, properties)
     }
 
+    /// Creates multiple nodes in a single call, reserving sequential IDs in one counter update.
+    pub fn create_nodes_bulk(
+        &mut self,
+        nodes: impl IntoIterator<Item = (impl Into<String>, Properties)>,
+    ) -> Result<Vec<NodeId>, BknError> {
+        create_nodes_bulk_in(self.wtx, nodes)
+    }
+
     /// See [`crate::graph::GraphDb::create_edge`].
     pub fn create_edge(
         &mut self,
@@ -62,6 +71,14 @@ impl<'s, W: StorageWriteTx> BatchGraph<'s, W> {
         properties: Properties,
     ) -> Result<EdgeId, BknError> {
         create_edge_in(self.wtx, from, edge_type, to, properties)
+    }
+
+    /// Creates multiple edges in a single call, reserving sequential IDs in one counter update.
+    pub fn create_edges_bulk(
+        &mut self,
+        edges: impl IntoIterator<Item = (NodeId, impl Into<String>, NodeId, Properties)>,
+    ) -> Result<Vec<EdgeId>, BknError> {
+        create_edges_bulk_in(self.wtx, edges)
     }
 
     /// See [`crate::graph::GraphDb::delete_node`].
@@ -117,6 +134,37 @@ impl<'s, W: StorageWriteTx> BatchGraph<'s, W> {
     pub fn in_degree(&self, node: NodeId) -> Result<usize, BknError> {
         Ok(self.neighbors_in_any(node)?.len())
     }
+
+    pub fn traversal(&self) -> crate::graph::traversal::TraversalOnTx<'_, W> {
+        crate::graph::traversal::TraversalOnTx::new(self.wtx)
+    }
+
+    pub fn find_shortest_path(
+        &self,
+        start: NodeId,
+        target: NodeId,
+        direction: crate::graph::traversal::Direction,
+        edge_types: Option<&[&str]>,
+    ) -> Result<Option<crate::graph::traversal::PathResult>, BknError> {
+        crate::graph::traversal::find_shortest_path_in(self.wtx, start, target, direction, edge_types)
+    }
+
+    pub fn top_hubs(
+        &self,
+        limit: usize,
+        direction: crate::graph::traversal::Direction,
+        label: Option<&str>,
+    ) -> Result<Vec<(NodeId, usize)>, BknError> {
+        crate::graph::db::top_hubs_in(self.wtx, limit, direction, label)
+    }
+
+    pub fn cascade_delete(
+        &mut self,
+        root: NodeId,
+        containment_edge_type: &str,
+    ) -> Result<Vec<NodeId>, BknError> {
+        crate::graph::db::cascade_delete_in(self.wtx, root, containment_edge_type)
+    }
 }
 
 /// A read-only view of the graph over an open [`StorageReadTx`].
@@ -160,5 +208,29 @@ impl<'s, R: StorageReadTx> ReadGraph<'s, R> {
     pub fn in_degree(&self, node: NodeId) -> Result<usize, BknError> {
         Ok(self.neighbors_in_any(node)?.len())
     }
+
+    pub fn traversal(&self) -> crate::graph::traversal::TraversalOnTx<'_, R> {
+        crate::graph::traversal::TraversalOnTx::new(self.rtx)
+    }
+
+    pub fn find_shortest_path(
+        &self,
+        start: NodeId,
+        target: NodeId,
+        direction: crate::graph::traversal::Direction,
+        edge_types: Option<&[&str]>,
+    ) -> Result<Option<crate::graph::traversal::PathResult>, BknError> {
+        crate::graph::traversal::find_shortest_path_in(self.rtx, start, target, direction, edge_types)
+    }
+
+    pub fn top_hubs(
+        &self,
+        limit: usize,
+        direction: crate::graph::traversal::Direction,
+        label: Option<&str>,
+    ) -> Result<Vec<(NodeId, usize)>, BknError> {
+        crate::graph::db::top_hubs_in(self.rtx, limit, direction, label)
+    }
 }
+
 

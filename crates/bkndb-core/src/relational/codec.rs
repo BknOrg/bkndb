@@ -121,6 +121,21 @@ pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/// Computes range bounds for prefix scan over a sortable string secondary index.
+pub fn sortable_str_prefix_bounds(prefix: &str) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
+    if prefix.is_empty() {
+        (Bound::Unbounded, Bound::Unbounded)
+    } else {
+        let p_bytes = prefix.as_bytes().to_vec();
+        let hi = match prefix_upper_bound(&p_bytes) {
+            Some(ub) => Bound::Excluded(ub),
+            None => Bound::Unbounded,
+        };
+        (Bound::Included(p_bytes), hi)
+    }
+}
+
+
 fn row_counter_key(schema: &RelSchema) -> Vec<u8> {
     format!("relnext:{}", schema.name).into_bytes()
 }
@@ -130,6 +145,19 @@ fn row_counter_key(schema: &RelSchema) -> Vec<u8> {
 /// persisted counter in the shared meta table, read-modify-write inside
 /// the caller's write tx so allocation and the row insert commit together.
 pub fn next_pk<W: StorageWriteTx>(wtx: &mut W, schema: &RelSchema) -> Result<i64, BknError> {
+    reserve_pks(wtx, schema, 1)
+}
+
+/// Reserves a contiguous block of `count` primary keys for `schema`,
+/// updating the counter in `META` once. Returns the starting primary key.
+pub fn reserve_pks<W: StorageWriteTx>(
+    wtx: &mut W,
+    schema: &RelSchema,
+    count: u64,
+) -> Result<i64, BknError> {
+    if count == 0 {
+        return Ok(0);
+    }
     let key = row_counter_key(schema);
     let current = match wtx.get(META, &key)? {
         Some(bytes) => u64::from_be_bytes(
@@ -140,7 +168,7 @@ pub fn next_pk<W: StorageWriteTx>(wtx: &mut W, schema: &RelSchema) -> Result<i64
         ),
         None => 1,
     };
-    wtx.put(META, &key, &(current + 1).to_be_bytes())?;
+    wtx.put(META, &key, &(current + count).to_be_bytes())?;
     Ok(current as i64)
 }
 

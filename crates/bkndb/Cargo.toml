@@ -19,3 +19,4 @@ relational-layer = ["bkndb-core/relational"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
+bkndb-storage-lsm = { path = "../bkndb-storage-lsm" }

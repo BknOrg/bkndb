@@ -2,8 +2,8 @@ use std::ops::Bound;
 
 use crate::relational::codec::next_pk;
 use crate::relational::db::{
-    delete_row_in, get_in, index_lookup_eq_in, index_lookup_range_in, scan_all_in, update_row_in,
-    write_row_in, Row,
+    delete_row_in, get_in, index_lookup_eq_in, index_lookup_prefix_in, index_lookup_range_in,
+    insert_bulk_in, insert_with_pk_bulk_in, scan_all_in, update_row_in, write_row_in, Row,
 };
 use crate::relational::schema::RelSchema;
 use crate::value::{PropValue, Properties};
@@ -69,6 +69,12 @@ impl<'s, W: StorageWriteTx> BatchTable<'s, W> {
         Ok(pk)
     }
 
+    /// Inserts multiple rows in a single batch, reserving PKs in one counter update
+    /// if auto-increment is enabled.
+    pub fn insert_bulk(&mut self, rows: impl IntoIterator<Item = Properties>) -> Result<Vec<PropValue>, BknError> {
+        insert_bulk_in(self.wtx, self.schema, rows)
+    }
+
     /// See [`crate::relational::RelTable::insert_with_pk`].
     pub fn insert_with_pk(&mut self, pk: PropValue, values: Properties) -> Result<(), BknError> {
         if self.schema.auto_increment_pk {
@@ -78,6 +84,11 @@ impl<'s, W: StorageWriteTx> BatchTable<'s, W> {
         }
         write_row_in(self.wtx, self.schema, &pk, &values)?;
         Ok(())
+    }
+
+    /// Inserts multiple rows with caller-supplied PKs in a single batch.
+    pub fn insert_with_pk_bulk(&mut self, rows: impl IntoIterator<Item = (PropValue, Properties)>) -> Result<(), BknError> {
+        insert_with_pk_bulk_in(self.wtx, self.schema, rows)
     }
 
     /// See [`crate::relational::RelTable::get`]. Reads the batch's own
@@ -163,6 +174,23 @@ impl<'s, W: StorageWriteTx> BatchTable<'s, W> {
             Err(BknError::Encoding(format!("cannot range scan unindexed column '{column}'")))
         }
     }
+
+    /// Rows whose `column` string value starts with `prefix`, using that
+    /// column's secondary index if available, falling back to a full scan.
+    pub fn select_prefix(&self, column: &str, prefix: &str) -> Result<Vec<Row>, BknError> {
+        if self.schema.is_indexed(column) {
+            index_lookup_prefix_in(self.wtx, self.schema, column, prefix)
+        } else {
+            let rows = scan_all_in(self.wtx, self.schema)?;
+            Ok(rows
+                .into_iter()
+                .filter(|r| match r.get(self.schema, column) {
+                    Some(PropValue::Str(s)) => s.starts_with(prefix),
+                    _ => false,
+                })
+                .collect())
+        }
+    }
 }
 
 /// Borrowing sibling of [`RelWriteBatch`], for use inside a bigger,
@@ -225,6 +253,23 @@ impl<'s, R: StorageReadTx> ReadTable<'s, R> {
             Err(BknError::Encoding(format!("cannot range scan unindexed column '{column}'")))
         }
     }
+
+    /// Rows whose `column` string value starts with `prefix`, using that
+    /// column's secondary index if available, falling back to a full scan.
+    pub fn select_prefix(&self, column: &str, prefix: &str) -> Result<Vec<Row>, BknError> {
+        if self.schema.is_indexed(column) {
+            index_lookup_prefix_in(self.rtx, self.schema, column, prefix)
+        } else {
+            let rows = scan_all_in(self.rtx, self.schema)?;
+            Ok(rows
+                .into_iter()
+                .filter(|r| match r.get(self.schema, column) {
+                    Some(PropValue::Str(s)) => s.starts_with(prefix),
+                    _ => false,
+                })
+                .collect())
+        }
+    }
 }
 
 /// A read-only multi-table relational view over an open [`StorageReadTx`].
@@ -237,7 +282,7 @@ impl<'s, R: StorageReadTx> RelReadView<'s, R> {
         Self { rtx }
     }
 
-    pub fn table<'t>(&'t self, schema: &'t RelSchema) -> ReadTable<'t, R> {
+    pub fn table(&self, schema: &'s RelSchema) -> ReadTable<'s, R> {
         ReadTable::new(self.rtx, schema)
     }
 }

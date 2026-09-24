@@ -1,4 +1,7 @@
-use bkndb_core::test_util::{relational_conformance_suite, relational_write_tx_conformance_suite};
+use bkndb_core::test_util::{
+    relational_conformance_suite, relational_indexing_and_hybrid_suite,
+    relational_write_tx_conformance_suite,
+};
 use bkndb_storage_redb::RedbStorageBackend;
 
 #[test]
@@ -16,3 +19,12 @@ fn redb_backend_satisfies_relational_write_tx_conformance_suite() {
     let backend = RedbStorageBackend::open(&path).unwrap();
     relational_write_tx_conformance_suite(backend);
 }
+
+#[test]
+fn redb_backend_satisfies_relational_indexing_and_hybrid_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("relational_indexing_hybrid_test.bkndb");
+    let backend = RedbStorageBackend::open(&path).unwrap();
+    relational_indexing_and_hybrid_suite(backend);
+}
+

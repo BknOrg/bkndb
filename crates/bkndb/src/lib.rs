@@ -40,6 +40,33 @@ impl BknDb {
     pub fn inner(&self) -> &Db<RedbStorageBackend> {
         &self.inner
     }
+
+    /// Convenience helper for joining a list of graph node IDs with a relational table
+    /// whose primary key is the node ID.
+    pub fn join_nodes_with_table(
+        &self,
+        nodes: &[bkndb_core::graph::NodeId],
+        schema: &bkndb_core::relational::RelSchema,
+    ) -> Result<Vec<bkndb_core::hybrid::JoinedNode>, BknError> {
+        self.read_tx(|tx| tx.join_nodes_with_table(nodes, schema))
+    }
+
+    /// Convenience helper for joining a list of graph node IDs with a relational table
+    /// by a foreign-key integer column.
+    pub fn join_nodes_by_column(
+        &self,
+        nodes: &[bkndb_core::graph::NodeId],
+        schema: &bkndb_core::relational::RelSchema,
+        foreign_key_col: &str,
+    ) -> Result<Vec<bkndb_core::hybrid::JoinedNodeRows>, BknError> {
+        self.read_tx(|tx| tx.join_nodes_by_column(nodes, schema, foreign_key_col))
+    }
+
+    /// Ingests a structured batch of graph nodes, edges, and relational rows
+    /// in a single atomic transaction using optimized bulk primitives.
+    pub fn sync_batch<'a>(&self, batch: SyncBatch<'a>) -> Result<SyncBatchResult, BknError> {
+        self.inner.sync_batch(batch)
+    }
 }
 
 #[cfg(feature = "redb-backend")]

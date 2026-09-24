@@ -1,5 +1,5 @@
 mod codec;
-mod db;
+pub(crate) mod db;
 mod query;
 mod schema;
 pub mod txn;

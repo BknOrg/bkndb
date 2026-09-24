@@ -5,9 +5,13 @@
 mod batch;
 mod read_tx;
 mod write_tx;
+#[cfg(all(feature = "graph", feature = "relational"))]
+mod sync;
 
 pub use batch::DbWriteBatch;
 pub use read_tx::DbReadBatch;
+#[cfg(all(feature = "graph", feature = "relational"))]
+pub use sync::{SyncBatch, SyncBatchResult};
 
 use std::sync::Arc;
 

@@ -4,7 +4,20 @@ version.workspace = true
 edition.workspace = true
 
 [lib]
-crate-type = ["lib"]
+crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
+bkndb = { path = "../bkndb" }
 bkndb-core = { path = "../bkndb-core" }
+thiserror = "2"
+uniffi = { version = "0.32.2", features = ["build", "cli"] }
+
+[build-dependencies]
+uniffi = { version = "0.32.2", features = ["build"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+
+[dev-dependencies]
+tempfile = "3"

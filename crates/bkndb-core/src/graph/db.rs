@@ -17,12 +17,17 @@ fn decode<T: for<'de> serde::Deserialize<'de>>(bytes: &[u8]) -> Result<T, BknErr
     bincode::deserialize(bytes).map_err(|e| BknError::Encoding(e.to_string()))
 }
 
-/// Reads the persisted id counter (default 1 if absent), writes counter+1,
+/// Reads the persisted id counter (default 1 if absent), writes counter+count,
 /// and returns the old value — all inside the caller's write tx, so id
-/// allocation and the record insert commit atomically together. Using a
-/// persisted counter (not an in-process atomic seeded by scanning at
-/// startup) means ids stay correct across process restarts for free.
-fn next_id<W: StorageWriteTx>(wtx: &mut W, counter_key: &[u8]) -> Result<u64, BknError> {
+/// allocation and record inserts commit atomically together.
+pub(crate) fn reserve_ids<W: StorageWriteTx>(
+    wtx: &mut W,
+    counter_key: &[u8],
+    count: u64,
+) -> Result<u64, BknError> {
+    if count == 0 {
+        return Ok(1);
+    }
     let current = match wtx.get(META, counter_key)? {
         Some(bytes) => u64::from_be_bytes(
             bytes
@@ -32,13 +37,17 @@ fn next_id<W: StorageWriteTx>(wtx: &mut W, counter_key: &[u8]) -> Result<u64, Bk
         ),
         None => 1,
     };
-    wtx.put(META, counter_key, &(current + 1).to_be_bytes())?;
+    wtx.put(META, counter_key, &(current + count).to_be_bytes())?;
     Ok(current)
+}
+
+fn next_id<W: StorageWriteTx>(wtx: &mut W, counter_key: &[u8]) -> Result<u64, BknError> {
+    reserve_ids(wtx, counter_key, 1)
 }
 
 /// Property-graph facade layered on top of a raw [`StorageBackend`].
 pub struct GraphDb<B: StorageBackend> {
-    backend: Arc<B>,
+    pub(crate) backend: Arc<B>,
 }
 
 impl<B: StorageBackend> GraphDb<B> {
@@ -59,6 +68,13 @@ impl<B: StorageBackend> GraphDb<B> {
         Ok(id)
     }
 
+    pub fn create_nodes_bulk(&self, nodes: impl IntoIterator<Item = (impl Into<String>, Properties)>) -> Result<Vec<NodeId>, BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        let ids = create_nodes_bulk_in(&mut wtx, nodes)?;
+        wtx.commit()?;
+        Ok(ids)
+    }
+
     pub fn get_node(&self, id: NodeId) -> Result<Option<NodeRecord>, BknError> {
         let rtx = self.backend.begin_read()?;
         get_node_in(&rtx, id)
@@ -75,6 +91,13 @@ impl<B: StorageBackend> GraphDb<B> {
         let id = create_edge_in(&mut wtx, from, edge_type, to, properties)?;
         wtx.commit()?;
         Ok(id)
+    }
+
+    pub fn create_edges_bulk(&self, edges: impl IntoIterator<Item = (NodeId, impl Into<String>, NodeId, Properties)>) -> Result<Vec<EdgeId>, BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        let ids = create_edges_bulk_in(&mut wtx, edges)?;
+        wtx.commit()?;
+        Ok(ids)
     }
 
     pub fn get_edge(&self, id: EdgeId) -> Result<Option<EdgeRecord>, BknError> {
@@ -139,6 +162,38 @@ impl<B: StorageBackend> GraphDb<B> {
 
     pub fn traversal(&self) -> crate::graph::traversal::TraversalBuilder<'_, B> {
         crate::graph::traversal::TraversalBuilder::new(self)
+    }
+
+    pub fn find_shortest_path(
+        &self,
+        start: NodeId,
+        target: NodeId,
+        direction: crate::graph::traversal::Direction,
+        edge_types: Option<&[&str]>,
+    ) -> Result<Option<crate::graph::traversal::PathResult>, BknError> {
+        let rtx = self.backend.begin_read()?;
+        crate::graph::traversal::find_shortest_path_in(&rtx, start, target, direction, edge_types)
+    }
+
+    pub fn top_hubs(
+        &self,
+        limit: usize,
+        direction: crate::graph::traversal::Direction,
+        label: Option<&str>,
+    ) -> Result<Vec<(NodeId, usize)>, BknError> {
+        let rtx = self.backend.begin_read()?;
+        top_hubs_in(&rtx, limit, direction, label)
+    }
+
+    pub fn cascade_delete(
+        &self,
+        root: NodeId,
+        containment_edge_type: &str,
+    ) -> Result<Vec<NodeId>, BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        let deleted = cascade_delete_in(&mut wtx, root, containment_edge_type)?;
+        wtx.commit()?;
+        Ok(deleted)
     }
 
     /// Runs `f` against one shared write transaction spanning however many
@@ -211,6 +266,70 @@ pub(crate) fn create_edge_in<W: StorageWriteTx>(
     wtx.put(ADJ_OUT, &adj_out_key(from, edge_type, to, id), &[])?;
     wtx.put(ADJ_IN, &adj_in_key(to, edge_type, from, id), &[])?;
     Ok(id)
+}
+
+pub(crate) fn create_nodes_bulk_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    nodes: impl IntoIterator<Item = (impl Into<String>, Properties)>,
+) -> Result<Vec<NodeId>, BknError> {
+    let items: Vec<(String, Properties)> = nodes
+        .into_iter()
+        .map(|(label, props)| (label.into(), props))
+        .collect();
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let start_id = reserve_ids(wtx, NEXT_NODE_ID_KEY, items.len() as u64)?;
+    let mut ids = Vec::with_capacity(items.len());
+    for (i, (label, properties)) in items.into_iter().enumerate() {
+        let id = NodeId(start_id + i as u64);
+        let record = NodeRecord { label, properties };
+        wtx.put(NODES, &node_key(id), &encode(&record)?)?;
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+pub(crate) fn create_edges_bulk_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    edges: impl IntoIterator<Item = (NodeId, impl Into<String>, NodeId, Properties)>,
+) -> Result<Vec<EdgeId>, BknError> {
+    let items: Vec<(NodeId, String, NodeId, Properties)> = edges
+        .into_iter()
+        .map(|(from, edge_type, to, props)| (from, edge_type.into(), to, props))
+        .collect();
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let start_id = reserve_ids(wtx, NEXT_EDGE_ID_KEY, items.len() as u64)?;
+    let mut ids = Vec::with_capacity(items.len());
+    let mut verified = std::collections::HashSet::new();
+    for (i, (from, edge_type, to, properties)) in items.into_iter().enumerate() {
+        if !verified.contains(&from) {
+            if wtx.get(NODES, &node_key(from))?.is_none() {
+                return Err(BknError::NotFound);
+            }
+            verified.insert(from);
+        }
+        if !verified.contains(&to) {
+            if wtx.get(NODES, &node_key(to))?.is_none() {
+                return Err(BknError::NotFound);
+            }
+            verified.insert(to);
+        }
+        let id = EdgeId(start_id + i as u64);
+        let record = EdgeRecord {
+            from,
+            to,
+            edge_type: edge_type.clone(),
+            properties,
+        };
+        wtx.put(EDGES, &edge_key(id), &encode(&record)?)?;
+        wtx.put(ADJ_OUT, &adj_out_key(from, &edge_type, to, id), &[])?;
+        wtx.put(ADJ_IN, &adj_in_key(to, &edge_type, from, id), &[])?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 pub(crate) fn get_edge_in<R: StorageReadTx>(rtx: &R, id: EdgeId) -> Result<Option<EdgeRecord>, BknError> {
@@ -319,4 +438,91 @@ pub(crate) fn neighbors_any_in<R: StorageReadTx>(
         })
         .collect())
 }
+
+pub(crate) fn top_hubs_in<R: StorageReadTx>(
+    rtx: &R,
+    limit: usize,
+    direction: crate::graph::traversal::Direction,
+    label_filter: Option<&str>,
+) -> Result<Vec<(NodeId, usize)>, BknError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let rows = rtx.range(NODES, Bound::Unbounded, Bound::Unbounded)?;
+    let mut heap: BinaryHeap<Reverse<(usize, u64)>> = BinaryHeap::with_capacity(limit);
+
+    for (k, v) in rows {
+        let node_id = crate::graph::codec::decode_node_id(&k)?;
+        if let Some(target_label) = label_filter {
+            let record: NodeRecord = decode(&v)?;
+            if record.label != target_label {
+                continue;
+            }
+        }
+
+        let deg = match direction {
+            crate::graph::traversal::Direction::Out => neighbors_any_in(rtx, ADJ_OUT, node_id)?.len(),
+            crate::graph::traversal::Direction::In => neighbors_any_in(rtx, ADJ_IN, node_id)?.len(),
+            crate::graph::traversal::Direction::Both => {
+                neighbors_any_in(rtx, ADJ_OUT, node_id)?.len()
+                    + neighbors_any_in(rtx, ADJ_IN, node_id)?.len()
+            }
+        };
+
+        if heap.len() < limit {
+            heap.push(Reverse((deg, node_id.0)));
+        } else if let Some(&Reverse((min_deg, _))) = heap.peek() {
+            if deg > min_deg {
+                heap.pop();
+                heap.push(Reverse((deg, node_id.0)));
+            }
+        }
+    }
+
+    let mut result: Vec<(NodeId, usize)> = heap
+        .into_sorted_vec()
+        .into_iter()
+        .map(|Reverse((deg, id))| (NodeId(id), deg))
+        .collect();
+    result.reverse();
+    Ok(result)
+}
+
+pub(crate) fn cascade_delete_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    root: NodeId,
+    containment_edge_type: &str,
+) -> Result<Vec<NodeId>, BknError> {
+    if get_node_in(wtx, root)?.is_none() {
+        return Err(BknError::NotFound);
+    }
+
+    let mut to_delete = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+
+    visited.insert(root);
+    queue.push_back(root);
+
+    while let Some(current) = queue.pop_front() {
+        to_delete.push(current);
+        let neighbors = neighbors_out_in(wtx, current, containment_edge_type)?;
+        for (child, _) in neighbors {
+            if visited.insert(child) {
+                queue.push_back(child);
+            }
+        }
+    }
+
+    for &node_id in to_delete.iter().rev() {
+        delete_node_in(wtx, node_id)?;
+    }
+
+    Ok(to_delete)
+}
+
 

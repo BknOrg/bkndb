@@ -1,4 +1,4 @@
-use bkndb_core::test_util::graph_conformance_suite;
+use bkndb_core::test_util::{graph_advanced_algorithms_suite, graph_conformance_suite};
 use bkndb_core::{StorageBackend, StorageWriteTx, TableSpec};
 use bkndb_storage_redb::RedbStorageBackend;
 
@@ -8,6 +8,14 @@ fn redb_backend_satisfies_graph_conformance_suite() {
     let path = dir.path().join("m2_test.bkndb");
     let backend = RedbStorageBackend::open(&path).unwrap();
     graph_conformance_suite(backend);
+}
+
+#[test]
+fn redb_backend_satisfies_graph_advanced_algorithms_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m2_adv_test.bkndb");
+    let backend = RedbStorageBackend::open(&path).unwrap();
+    graph_advanced_algorithms_suite(backend);
 }
 
 /// Cascade delete (and every other GraphDb write) relies on redb's write
