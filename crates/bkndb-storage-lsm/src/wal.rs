@@ -36,10 +36,14 @@ pub fn append(file: &File, record: &WalRecord) -> Result<(), BknError> {
     let crc = crc32fast::hash(&payload);
     let len = payload.len() as u32;
 
-    (&*file).seek(SeekFrom::End(0)).map_err(io_err)?;
-    (&*file).write_all(&len.to_be_bytes()).map_err(io_err)?;
-    (&*file).write_all(&crc.to_be_bytes()).map_err(io_err)?;
-    (&*file).write_all(&payload).map_err(io_err)?;
+    let mut buf = Vec::with_capacity(8 + payload.len());
+    buf.extend_from_slice(&len.to_be_bytes());
+    buf.extend_from_slice(&crc.to_be_bytes());
+    buf.extend_from_slice(&payload);
+
+    let mut f = file;
+    f.seek(SeekFrom::End(0)).map_err(io_err)?;
+    f.write_all(&buf).map_err(io_err)?;
     file.sync_data().map_err(io_err)?;
     Ok(())
 }

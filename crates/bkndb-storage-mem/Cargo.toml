@@ -2,9 +2,13 @@
 name = "bkndb-storage-mem"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "In-memory storage engine backend for BknDb"
 
 [dependencies]
-bkndb-core = { path = "../bkndb-core" }
+bkndb-core = { version = "0.1.0", path = "../bkndb-core" }
 
 [dev-dependencies]
 bkndb-core = { path = "../bkndb-core", features = ["test-util", "graph", "relational"] }

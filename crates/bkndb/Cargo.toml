@@ -2,15 +2,20 @@
 name = "bkndb"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Embedded hybrid graph-relational database engine with ACID transactions"
+readme = "README.md"
 
 [dependencies]
-bkndb-core = { path = "../bkndb-core" }
-bkndb-storage-redb = { path = "../bkndb-storage-redb", optional = true }
-bkndb-storage-mem = { path = "../bkndb-storage-mem", optional = true }
-bkndb-storage-lsm = { path = "../bkndb-storage-lsm", optional = true }
+bkndb-core = { version = "0.1.0", path = "../bkndb-core" }
+bkndb-storage-redb = { version = "0.1.0", path = "../bkndb-storage-redb", optional = true }
+bkndb-storage-mem = { version = "0.1.0", path = "../bkndb-storage-mem", optional = true }
+bkndb-storage-lsm = { version = "0.1.0", path = "../bkndb-storage-lsm", optional = true }
 
 [features]
-default = ["redb-backend", "mem-backend", "graph", "relational-layer"]
+default = ["lsm-backend", "mem-backend", "graph", "relational-layer"]
 redb-backend = ["dep:bkndb-storage-redb"]
 mem-backend = ["dep:bkndb-storage-mem"]
 lsm-backend = ["dep:bkndb-storage-lsm"]
@@ -20,3 +25,4 @@ relational-layer = ["bkndb-core/relational"]
 [dev-dependencies]
 tempfile = { workspace = true }
 bkndb-storage-lsm = { path = "../bkndb-storage-lsm" }
+bkndb-storage-redb = { path = "../bkndb-storage-redb" }

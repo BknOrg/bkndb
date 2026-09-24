@@ -2,6 +2,11 @@
 name = "bkndb-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Core primitives, hybrid transactions, and storage interfaces for BknDb"
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }

@@ -13,7 +13,7 @@
 //! [footer, fixed 24 bytes]       bloom_offset:u64 BE ++ index_offset:u64 BE ++ index_len:u64 BE
 //! ```
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Bound;
 use std::sync::Arc;
 
@@ -33,7 +33,8 @@ fn enc_err(e: impl std::fmt::Display) -> BknError {
 }
 
 pub struct SstableHandle {
-    file: Arc<File>,
+    _file: Arc<File>,
+    mmap: Arc<memmap2::Mmap>,
     pub base_offset: u64,
     pub blob_len: u64,
     bloom: BloomFilter,
@@ -66,27 +67,60 @@ fn write_entry<W: Write>(w: &mut W, key: &[u8], value: &LsmValue) -> Result<u64,
     Ok(written)
 }
 
-fn read_entry<R: Read>(r: &mut R) -> Result<(Vec<u8>, LsmValue, u64), BknError> {
-    let mut len_buf = [0u8; 4];
-    r.read_exact(&mut len_buf).map_err(io_err)?;
-    let key_len = u32::from_be_bytes(len_buf) as usize;
-    let mut key = vec![0u8; key_len];
-    r.read_exact(&mut key).map_err(io_err)?;
-    let mut tag = [0u8; 1];
-    r.read_exact(&mut tag).map_err(io_err)?;
-    let mut consumed = 4u64 + key_len as u64 + 1;
-    let value = if tag[0] == 0 {
+#[inline]
+fn read_entry_from_slice(slice: &[u8]) -> Result<(&[u8], LsmValue, usize), BknError> {
+    if slice.len() < 4 {
+        return Err(BknError::Backend("unexpected EOF reading key length".to_string()));
+    }
+    let key_len = u32::from_be_bytes(slice[0..4].try_into().unwrap()) as usize;
+    if slice.len() < 4 + key_len + 1 {
+        return Err(BknError::Backend("unexpected EOF reading key and tag".to_string()));
+    }
+    let key = &slice[4..4 + key_len];
+    let tag = slice[4 + key_len];
+    let mut consumed = 4 + key_len + 1;
+    let value = if tag == 0 {
         LsmValue::Tombstone
     } else {
-        let mut vlen_buf = [0u8; 4];
-        r.read_exact(&mut vlen_buf).map_err(io_err)?;
-        let vlen = u32::from_be_bytes(vlen_buf) as usize;
-        let mut bytes = vec![0u8; vlen];
-        r.read_exact(&mut bytes).map_err(io_err)?;
-        consumed += 4 + vlen as u64;
-        LsmValue::Value(bytes)
+        if slice.len() < consumed + 4 {
+            return Err(BknError::Backend("unexpected EOF reading value length".to_string()));
+        }
+        let vlen = u32::from_be_bytes(slice[consumed..consumed + 4].try_into().unwrap()) as usize;
+        consumed += 4;
+        if slice.len() < consumed + vlen {
+            return Err(BknError::Backend("unexpected EOF reading value bytes".to_string()));
+        }
+        let val_bytes = slice[consumed..consumed + vlen].to_vec();
+        consumed += vlen;
+        LsmValue::Value(val_bytes)
     };
     Ok((key, value, consumed))
+}
+
+#[inline]
+fn peek_key_and_skip_from_slice(slice: &[u8]) -> Result<(&[u8], usize, bool, usize), BknError> {
+    if slice.len() < 4 {
+        return Err(BknError::Backend("unexpected EOF reading key length".to_string()));
+    }
+    let key_len = u32::from_be_bytes(slice[0..4].try_into().unwrap()) as usize;
+    if slice.len() < 4 + key_len + 1 {
+        return Err(BknError::Backend("unexpected EOF reading key and tag".to_string()));
+    }
+    let key = &slice[4..4 + key_len];
+    let tag = slice[4 + key_len];
+    let is_tombstone = tag == 0;
+    let mut total_len = 4 + key_len + 1;
+    let val_len = if is_tombstone {
+        0
+    } else {
+        if slice.len() < total_len + 4 {
+            return Err(BknError::Backend("unexpected EOF reading value length".to_string()));
+        }
+        let vlen = u32::from_be_bytes(slice[total_len..total_len + 4].try_into().unwrap()) as usize;
+        total_len += 4 + vlen;
+        vlen
+    };
+    Ok((key, total_len, is_tombstone, val_len))
 }
 
 impl SstableHandle {
@@ -113,10 +147,6 @@ impl SstableHandle {
         let mut count = 0usize;
         let interval = sparse_interval.max(1);
 
-        // `&File` implements `Write`/`Seek` directly (via `&*file`), so we
-        // write straight through the shared handle at its current position
-        // — no separate BufWriter needed for correctness, just slightly
-        // more syscalls, acceptable at this project's scale.
         let mut w = &**file;
         for (key, value) in entries {
             if min_key.is_none() {
@@ -147,8 +177,12 @@ impl SstableHandle {
 
         let blob_len = index_offset + index_len + FOOTER_LEN;
 
+        // Map container file for zero-copy slice reading
+        let mmap = Arc::new(unsafe { memmap2::Mmap::map(&**file).map_err(io_err)? });
+
         Ok(Self {
-            file: file.clone(),
+            _file: file.clone(),
+            mmap,
             base_offset,
             blob_len,
             bloom,
@@ -183,8 +217,12 @@ impl SstableHandle {
         let (min_key, max_key, sparse_index): (Vec<u8>, Vec<u8>, Vec<(Vec<u8>, u64)>) =
             bincode::deserialize(&index_bytes).map_err(enc_err)?;
 
+        // Map container file for zero-copy slice reading
+        let mmap = Arc::new(unsafe { memmap2::Mmap::map(&**file).map_err(io_err)? });
+
         Ok(Self {
-            file: file.clone(),
+            _file: file.clone(),
+            mmap,
             base_offset,
             blob_len,
             bloom,
@@ -204,14 +242,6 @@ impl SstableHandle {
         }
     }
 
-    /// Independent, positioned reader over this blob's own bytes. Never
-    /// reopens by path: after a compaction rename, a path no longer refers
-    /// to this blob's bytes at all — only this originally-captured `Arc<File>`
-    /// still does (see `engine.rs`'s compaction doc comment).
-    fn reader(&self) -> Result<BufReader<File>, BknError> {
-        Ok(BufReader::new(self.file.try_clone().map_err(io_err)?))
-    }
-
     pub fn get(&self, key: &[u8]) -> Result<Option<LsmValue>, BknError> {
         if self.sparse_index.is_empty() || key < self.min_key.as_slice() || key > self.max_key.as_slice() {
             return Ok(None);
@@ -219,16 +249,35 @@ impl SstableHandle {
         if !self.bloom.might_contain(key) {
             return Ok(None);
         }
-        let mut reader = self.reader()?;
-        let mut pos = self.seek_start_offset(key);
-        reader.seek(SeekFrom::Start(self.base_offset + pos)).map_err(io_err)?;
-        while pos < self.data_end {
-            let (k, v, consumed) = read_entry(&mut reader)?;
-            pos += consumed;
-            match k.as_slice().cmp(key) {
-                std::cmp::Ordering::Equal => return Ok(Some(v)),
+
+        let start_pos = self.seek_start_offset(key) as usize;
+        let base = self.base_offset as usize;
+        let data_end = self.data_end as usize;
+
+        let mmap = self.mmap.as_ref();
+        if base + data_end > mmap.len() {
+            return Err(BknError::Backend("sstable data bounds exceed mmap length".to_string()));
+        }
+
+        let blob_slice = &mmap[base..base + data_end];
+        let mut pos = start_pos;
+
+        while pos < data_end {
+            let (k, total_len, is_tombstone, val_len) = peek_key_and_skip_from_slice(&blob_slice[pos..])?;
+            match k.cmp(key) {
+                std::cmp::Ordering::Equal => {
+                    let val = if is_tombstone {
+                        LsmValue::Tombstone
+                    } else {
+                        let val_offset = pos + total_len - val_len;
+                        LsmValue::Value(blob_slice[val_offset..pos + total_len].to_vec())
+                    };
+                    return Ok(Some(val));
+                }
                 std::cmp::Ordering::Greater => return Ok(None),
-                std::cmp::Ordering::Less => continue,
+                std::cmp::Ordering::Less => {
+                    pos += total_len;
+                }
             }
         }
         Ok(None)
@@ -252,37 +301,44 @@ impl SstableHandle {
             }
         }
 
-        let start_offset = match start {
-            Bound::Included(k) | Bound::Excluded(k) => self.seek_start_offset(k),
+        let start_pos = match start {
+            Bound::Included(k) | Bound::Excluded(k) => self.seek_start_offset(k) as usize,
             Bound::Unbounded => 0,
         };
 
-        let mut reader = self.reader()?;
-        reader.seek(SeekFrom::Start(self.base_offset + start_offset)).map_err(io_err)?;
+        let base = self.base_offset as usize;
+        let data_end = self.data_end as usize;
 
+        let mmap = self.mmap.as_ref();
+        if base + data_end > mmap.len() {
+            return Err(BknError::Backend("sstable data bounds exceed mmap length".to_string()));
+        }
+
+        let blob_slice = &mmap[base..base + data_end];
+        let mut pos = start_pos;
         let mut out = Vec::new();
-        let mut pos = start_offset;
-        while pos < self.data_end {
-            let (k, v, consumed) = read_entry(&mut reader)?;
+
+        while pos < data_end {
+            let (k, val, consumed) = read_entry_from_slice(&blob_slice[pos..])?;
             pos += consumed;
 
             let below_start = match start {
-                Bound::Included(b) => k.as_slice() < b,
-                Bound::Excluded(b) => k.as_slice() <= b,
+                Bound::Included(b) => k < b,
+                Bound::Excluded(b) => k <= b,
                 Bound::Unbounded => false,
             };
             if below_start {
                 continue;
             }
             let past_end = match end {
-                Bound::Included(b) => k.as_slice() > b,
-                Bound::Excluded(b) => k.as_slice() >= b,
+                Bound::Included(b) => k > b,
+                Bound::Excluded(b) => k >= b,
                 Bound::Unbounded => false,
             };
             if past_end {
                 break;
             }
-            out.push((k, v));
+            out.push((k.to_vec(), val));
         }
         Ok(out)
     }
@@ -358,5 +414,21 @@ mod tests {
         let h2 = SstableHandle::open(&file, 2, w2.base_offset, w2.blob_len).unwrap();
         assert_eq!(h1.get(b"a").unwrap(), Some(LsmValue::Value(b"first-a".to_vec())));
         assert_eq!(h2.get(b"a").unwrap(), Some(LsmValue::Value(b"second-a".to_vec())));
+    }
+
+    #[test]
+    fn mmap_coexists_with_append() {
+        let (_dir, file) = temp_file();
+        let first = vec![(b"a".to_vec(), LsmValue::Value(b"first-a".to_vec()))];
+        let _w1 = SstableHandle::write(&file, 1, first, 1, 4).unwrap();
+
+        // Create mmap
+        let mmap = unsafe { memmap2::Mmap::map(&*file).unwrap() };
+        assert!(!mmap.is_empty());
+
+        // Append more data while mmap is held
+        let second = vec![(b"b".to_vec(), LsmValue::Value(b"second-b".to_vec()))];
+        let w2 = SstableHandle::write(&file, 2, second, 1, 4).unwrap();
+        assert!(w2.blob_len > 0);
     }
 }

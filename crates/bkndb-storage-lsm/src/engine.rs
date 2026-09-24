@@ -25,8 +25,8 @@ pub struct LsmOptions {
 impl Default for LsmOptions {
     fn default() -> Self {
         Self {
-            memtable_flush_bytes: 4 * 1024 * 1024,
-            compaction_trigger_files: 8,
+            memtable_flush_bytes: 16 * 1024 * 1024,
+            compaction_trigger_files: 16,
             sparse_index_interval: 16,
         }
     }

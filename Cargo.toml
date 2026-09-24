@@ -13,6 +13,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+authors = ["Bkn Org"]
+repository = "https://github.com/BknOrg/bkn-db"
+description = "Embedded hybrid graph-relational database engine with ACID transactions"
 
 [workspace.dependencies]
 redb = "2"

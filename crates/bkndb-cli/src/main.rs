@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use bkndb::{RedbStorageBackend, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+use bkndb::{LsmStorageBackend, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 
 fn main() -> ExitCode {
     let path = match parse_args() {
@@ -47,7 +47,7 @@ fn parse_args() -> Result<PathBuf, String> {
 }
 
 fn run(path: &Path) -> Result<Option<String>, String> {
-    let backend = RedbStorageBackend::open(path)
+    let backend = LsmStorageBackend::open(path)
         .map_err(|e| format!("failed to open database at '{}': {e}", path.display()))?;
 
     {
@@ -67,5 +67,5 @@ fn run(path: &Path) -> Result<Option<String>, String> {
         .get(TableSpec("meta"), b"status")
         .map_err(|e| format!("failed to read back smoke-test key: {e}"))?;
 
-    Ok(value.map(|v| String::from_utf8_lossy(&v).into_owned()))
+    Ok(value.map(|v| String::from_utf8_lossy(v.as_ref()).into_owned()))
 }
