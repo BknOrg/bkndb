@@ -109,13 +109,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bkndb-cli"
-version = "0.1.0"
-dependencies = [
- "bkndb",
-]
-
-[[package]]
 name = "bkndb-core"
 version = "0.1.0"
 dependencies = [

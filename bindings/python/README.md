@@ -18,17 +18,18 @@ Embedded Hybrid Graph & Relational Database Engine for Python (via UniFFI).
 ```python
 from bkndb_ffi import BknDbEngine, FfiPropValue, FfiDirection
 
-# Buka database embedded
+# 1. Buka database embedded (.bkndb) atau in-memory
 db = BknDbEngine.open("my_knowledge.bkndb")
-# atau in-memory:
 # db = BknDbEngine.in_memory()
 
-# Buat entitas & relasi
-n1 = db.create_node("Prompt", {"text": FfiPropValue.Str("Analisis codebase")})
-n2 = db.create_node("Tool", {"name": FfiPropValue.Str("Linter")})
-db.create_edge(n1, n2, "USES", {})
+# 2. Buat entitas (Nodes) & relasi (Edges)
+n1 = db.create_node("Prompt", {"text": FfiPropValue.STR("Analisis codebase")})
+n2 = db.create_node("Tool", {"name": FfiPropValue.STR("Linter")})
+db.create_edge(n1, "USES", n2, {})
 
-# Traversal graf cepat
-neighbors = db.neighbors_out(n1)
-print(neighbors)
+# 3. Traversal graf cepat
+neighbors = db.neighbors_out(n1, "USES")
+for neighbor in neighbors:
+    target_node = db.get_node(neighbor.node_id)
+    print("Connected to:", target_node.label, target_node.properties)
 ```

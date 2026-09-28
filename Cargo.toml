@@ -7,7 +7,6 @@ members = [
     "crates/bkndb-storage-lsm",
     "crates/bkndb",
     "crates/bkndb-ffi",
-    "crates/bkndb-cli",
 ]
 
 [workspace.package]
