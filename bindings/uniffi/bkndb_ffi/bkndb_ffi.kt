@@ -2348,6 +2348,16 @@ sealed class FfiBknException: kotlin.Exception() {
             get() = "table=${ `table` }, message=${ `message` }"
     }
     
+    class ConstraintViolation(
+        
+        val `table`: kotlin.String, 
+        
+        val `message`: kotlin.String
+        ) : FfiBknException() {
+        override val message
+            get() = "table=${ `table` }, message=${ `message` }"
+    }
+    
 
     
 
@@ -2388,6 +2398,10 @@ public object FfiConverterTypeFfiBknError : FfiConverterRustBuffer<FfiBknExcepti
                 FfiConverterString.read(buf),
                 )
             8 -> FfiBknException.SchemaMismatch(
+                FfiConverterString.read(buf),
+                FfiConverterString.read(buf),
+                )
+            9 -> FfiBknException.ConstraintViolation(
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 )
@@ -2438,6 +2452,12 @@ public object FfiConverterTypeFfiBknError : FfiConverterRustBuffer<FfiBknExcepti
                 + FfiConverterString.allocationSize(value.`table`)
                 + FfiConverterString.allocationSize(value.`message`)
             )
+            is FfiBknException.ConstraintViolation -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`table`)
+                + FfiConverterString.allocationSize(value.`message`)
+            )
         }
     }
 
@@ -2480,6 +2500,12 @@ public object FfiConverterTypeFfiBknError : FfiConverterRustBuffer<FfiBknExcepti
             }
             is FfiBknException.SchemaMismatch -> {
                 buf.putInt(8)
+                FfiConverterString.write(value.`table`, buf)
+                FfiConverterString.write(value.`message`, buf)
+                Unit
+            }
+            is FfiBknException.ConstraintViolation -> {
+                buf.putInt(9)
                 FfiConverterString.write(value.`table`, buf)
                 FfiConverterString.write(value.`message`, buf)
                 Unit

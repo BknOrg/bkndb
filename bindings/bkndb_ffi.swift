@@ -1587,6 +1587,8 @@ enum FfiBknError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case SchemaMismatch(table: String, message: String
     )
+    case ConstraintViolation(table: String, message: String
+    )
 
     
 
@@ -1640,6 +1642,10 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
             table: try FfiConverterString.read(from: &buf), 
             message: try FfiConverterString.read(from: &buf)
             )
+        case 9: return .ConstraintViolation(
+            table: try FfiConverterString.read(from: &buf), 
+            message: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1689,6 +1695,12 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
         
         case let .SchemaMismatch(table,message):
             writeInt(&buf, Int32(8))
+            FfiConverterString.write(table, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .ConstraintViolation(table,message):
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(table, into: &buf)
             FfiConverterString.write(message, into: &buf)
             

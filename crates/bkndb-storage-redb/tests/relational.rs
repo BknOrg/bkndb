@@ -35,3 +35,15 @@ fn redb_backend_satisfies_relational_integrity_suite() {
     let backend = RedbStorageBackend::open(dir.path().join("integrity_test.bkndb")).unwrap();
     relational_integrity_suite(backend);
 }
+
+#[test]
+fn redb_backend_satisfies_relational_catalog_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::relational_catalog_suite(RedbStorageBackend::open(dir.path().join("catalog.redb")).unwrap());
+}
+
+#[test]
+fn redb_backend_satisfies_relational_query_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::relational_query_suite(RedbStorageBackend::open(dir.path().join("query.redb")).unwrap());
+}

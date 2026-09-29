@@ -19,6 +19,44 @@ pub enum PropValue {
 /// future content hashing of records.
 pub type Properties = BTreeMap<String, PropValue>;
 
+macro_rules! prop_from {
+    ($($t:ty => $variant:ident $(as $cast:ty)?),* $(,)?) => {
+        $(impl From<$t> for PropValue {
+            fn from(v: $t) -> Self {
+                PropValue::$variant(v $(as $cast)?)
+            }
+        })*
+    };
+}
+
+prop_from! {
+    bool => Bool,
+    i64 => Int,
+    i32 => Int as i64,
+    u32 => Int as i64,
+    f64 => Float,
+    String => Str,
+    Vec<u8> => Bytes,
+}
+
+impl From<&str> for PropValue {
+    fn from(v: &str) -> Self {
+        PropValue::Str(v.to_string())
+    }
+}
+
+impl From<&[u8]> for PropValue {
+    fn from(v: &[u8]) -> Self {
+        PropValue::Bytes(v.to_vec())
+    }
+}
+
+impl<T: Into<PropValue>> From<Option<T>> for PropValue {
+    fn from(v: Option<T>) -> Self {
+        v.map_or(PropValue::Null, Into::into)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -27,3 +27,13 @@ fn mem_backend_satisfies_relational_indexing_and_hybrid_suite() {
 fn mem_backend_satisfies_relational_integrity_suite() {
     relational_integrity_suite(MemoryStorageBackend::new());
 }
+
+#[test]
+fn mem_backend_satisfies_relational_catalog_suite() {
+    bkndb_core::test_util::relational_catalog_suite(MemoryStorageBackend::new());
+}
+
+#[test]
+fn mem_backend_satisfies_relational_query_suite() {
+    bkndb_core::test_util::relational_query_suite(MemoryStorageBackend::new());
+}

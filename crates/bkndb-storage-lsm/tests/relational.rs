@@ -32,3 +32,15 @@ fn lsm_backend_satisfies_relational_integrity_suite() {
     let backend = LsmStorageBackend::open(dir.path().join("integrity_test.bkndb")).unwrap();
     relational_integrity_suite(backend);
 }
+
+#[test]
+fn lsm_backend_satisfies_relational_catalog_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::relational_catalog_suite(LsmStorageBackend::open(dir.path().join("catalog.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_relational_query_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::relational_query_suite(LsmStorageBackend::open(dir.path().join("query.bkndb")).unwrap());
+}

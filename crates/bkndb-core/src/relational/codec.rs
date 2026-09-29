@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ops::Bound;
 use std::sync::{Mutex, OnceLock};
 
-use crate::relational::schema::{ColumnKind, RelSchema};
+use crate::relational::schema::{ColumnKind, TableDef, TableSchema};
 use crate::value::{PropValue, Properties};
 use crate::{BknError, StorageWriteTx, TableSpec};
 
@@ -14,29 +14,64 @@ use crate::{BknError, StorageWriteTx, TableSpec};
 /// the table count instead of causing conflicts.
 const META: TableSpec = TableSpec("meta");
 
-pub fn base_table(schema: &RelSchema) -> TableSpec {
-    TableSpec(schema.name)
+/// Returns a `'static` copy of `name`, leaking each distinct string at most
+/// once per process. `TableSpec` requires `&'static str`, but table names
+/// of runtime-defined tables (and every derived index table name) are only
+/// known at runtime; caching by content keeps the leak bounded by the number
+/// of distinct table/index names a process ever touches.
+pub(crate) fn intern(name: &str) -> &'static str {
+    static CACHE: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(&existing) = guard.get(name) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    guard.insert(leaked);
+    leaked
 }
 
-/// Computes (and caches) the physical `TableSpec` backing one column's
-/// secondary index. `TableSpec` requires a `&'static str`, and the index
-/// table's name is only known at schema-construction time (it's derived
-/// from `schema.name` + the column name), so it must be leaked once to get
-/// a `'static` lifetime. Caching by name ensures each distinct
-/// (schema, column) pair is leaked at most once, no matter how many times
-/// queries call this — a deliberate, bounded leak, not an unbounded one.
-pub fn index_table(schema: &RelSchema, column: &str) -> TableSpec {
-    static CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = format!("{}__idx_{}", schema.name, column);
+pub fn base_table(schema: &TableSchema) -> TableSpec {
+    schema.base_table()
+}
 
-    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(&name) = guard.get(&key) {
-        return TableSpec(name);
+/// The physical `TableSpec` backing one column's secondary index:
+/// `<table>__idx_<column>`.
+pub fn index_table(schema: &TableSchema, column: &str) -> TableSpec {
+    index_table_named(schema.name(), column)
+}
+
+pub fn index_table_named(table: &str, column: &str) -> TableSpec {
+    TableSpec(intern(&format!("{table}__idx_{column}")))
+}
+
+/// Catalog entries live in the shared `meta` table under this prefix,
+/// one per table: `relschema:<table name>` → `CATALOG_VERSION ++ bincode(TableDef)`.
+pub(crate) const CATALOG_PREFIX: &[u8] = b"relschema:";
+const CATALOG_VERSION: u8 = 1;
+
+pub(crate) fn catalog_key(table: &str) -> Vec<u8> {
+    let mut k = CATALOG_PREFIX.to_vec();
+    k.extend_from_slice(table.as_bytes());
+    k
+}
+
+pub(crate) fn encode_table_def(def: &TableDef) -> Result<Vec<u8>, BknError> {
+    let mut out = vec![CATALOG_VERSION];
+    out.extend(bincode::serialize(def).map_err(|e| BknError::Encoding(e.to_string()))?);
+    Ok(out)
+}
+
+pub(crate) fn decode_table_def(bytes: &[u8]) -> Result<TableDef, BknError> {
+    match bytes.split_first() {
+        Some((&CATALOG_VERSION, rest)) => bincode::deserialize(rest).map_err(|e| BknError::Encoding(e.to_string())),
+        Some((v, _)) => Err(BknError::Encoding(format!("unsupported catalog entry version {v}"))),
+        None => Err(BknError::Encoding("empty catalog entry".to_string())),
     }
-    let leaked: &'static str = Box::leak(key.clone().into_boxed_str());
-    guard.insert(key, leaked);
-    TableSpec(leaked)
+}
+
+pub(crate) fn meta_table() -> TableSpec {
+    META
 }
 
 /// Sortable ("memcomparable") byte encoding for a scalar value used as a
@@ -59,6 +94,13 @@ pub fn sortable_encode(value: &PropValue) -> Result<Vec<u8>, BknError> {
             Ok(flipped.to_be_bytes().to_vec())
         }
         PropValue::Str(s) => {
+            if s.as_bytes().contains(&0) {
+                // The 0x00 terminator is what keeps prefixes ordered and lets
+                // index keys be split back into value + pk.
+                return Err(BknError::Encoding(
+                    "strings used as a primary key or indexed value cannot contain a NUL byte".to_string(),
+                ));
+            }
             let mut out = s.as_bytes().to_vec();
             out.push(0);
             Ok(out)
@@ -136,29 +178,22 @@ pub fn sortable_str_prefix_bounds(prefix: &str) -> (Bound<Vec<u8>>, Bound<Vec<u8
 }
 
 
-fn row_counter_key(schema: &RelSchema) -> Vec<u8> {
-    format!("relnext:{}", schema.name).into_bytes()
+pub(crate) fn row_counter_key(table: &str) -> Vec<u8> {
+    format!("relnext:{table}").into_bytes()
 }
 
-/// Allocates the next auto-increment primary key for `schema`, mirroring
-/// the graph layer's `next_id` counter pattern (`graph/db.rs`) — a
-/// persisted counter in the shared meta table, read-modify-write inside
-/// the caller's write tx so allocation and the row insert commit together.
-pub fn next_pk<W: StorageWriteTx>(wtx: &mut W, schema: &RelSchema) -> Result<i64, BknError> {
-    reserve_pks(wtx, schema, 1)
-}
 
 /// Reserves a contiguous block of `count` primary keys for `schema`,
 /// updating the counter in `META` once. Returns the starting primary key.
 pub fn reserve_pks<W: StorageWriteTx>(
     wtx: &mut W,
-    schema: &RelSchema,
+    schema: &TableSchema,
     count: u64,
 ) -> Result<i64, BknError> {
     if count == 0 {
         return Ok(0);
     }
-    let key = row_counter_key(schema);
+    let key = row_counter_key(schema.name());
     let current = match wtx.get(META, &key)? {
         Some(bytes) => u64::from_be_bytes(
             bytes
@@ -170,6 +205,31 @@ pub fn reserve_pks<W: StorageWriteTx>(
     };
     wtx.put(META, &key, &(current + count).to_be_bytes())?;
     Ok(current as i64)
+}
+
+/// Makes sure future auto-increment allocations for `schema` start after
+/// `pk` — needed whenever a row is written with an explicit pk (upsert) on
+/// an auto-increment table, or the counter could later hand out that pk
+/// again and collide.
+pub fn bump_pk_counter_past<W: StorageWriteTx>(wtx: &mut W, schema: &TableSchema, pk: i64) -> Result<(), BknError> {
+    if pk < 1 {
+        return Ok(());
+    }
+    let key = row_counter_key(schema.name());
+    let current = match wtx.get(META, &key)? {
+        Some(bytes) => u64::from_be_bytes(
+            bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| BknError::Encoding("corrupt relational id counter".to_string()))?,
+        ),
+        None => 1,
+    };
+    let needed = pk as u64 + 1;
+    if needed > current {
+        wtx.put(META, &key, &needed.to_be_bytes())?;
+    }
+    Ok(())
 }
 
 /// The byte length of an indexed value's encoding at the start of one of
@@ -296,15 +356,15 @@ mod tests {
 
     #[test]
     fn index_table_is_cached_across_calls() {
-        let schema = RelSchema {
-            name: "widgets",
-            columns: &[],
-            primary_key: "id",
-            auto_increment_pk: true,
-            indexed_columns: &[],
-        };
-        let t1 = index_table(&schema, "color");
-        let t2 = index_table(&schema, "color");
+        let t1 = index_table_named("widgets", "color");
+        let t2 = index_table_named("widgets", "color");
+        assert_eq!(t1.0, "widgets__idx_color");
         assert_eq!(t1.0.as_ptr(), t2.0.as_ptr(), "must return the same leaked str, not re-leak");
+    }
+
+    #[test]
+    fn strings_with_nul_are_rejected_as_key_material() {
+        let with_nul = String::from_utf8(vec![b'a', 0, b'b']).unwrap();
+        assert!(sortable_encode(&PropValue::Str(with_nul)).is_err());
     }
 }

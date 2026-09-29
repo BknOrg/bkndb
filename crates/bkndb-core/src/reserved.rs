@@ -16,9 +16,9 @@ pub fn is_reserved(name: &str) -> bool {
     RESERVED_TABLE_NAMES.contains(&name)
 }
 
-pub fn check_table_name(name: &'static str) -> Result<(), BknError> {
+pub fn check_table_name(name: &str) -> Result<(), BknError> {
     if is_reserved(name) {
-        Err(BknError::ReservedTableName(name))
+        Err(BknError::ReservedTableName(name.to_string()))
     } else {
         Ok(())
     }

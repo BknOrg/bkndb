@@ -29,3 +29,13 @@ fn mem_backend_satisfies_batch_sync_bulk_conformance_suite() {
     batch_sync_bulk_conformance_suite(MemoryStorageBackend::new());
 }
 
+
+#[test]
+fn mem_backend_satisfies_sync_batch_upsert_suite() {
+    bkndb_core::test_util::sync_batch_upsert_suite(MemoryStorageBackend::new());
+}
+
+#[test]
+fn mem_backend_satisfies_hybrid_query_suite() {
+    bkndb_core::test_util::hybrid_query_suite(MemoryStorageBackend::new());
+}

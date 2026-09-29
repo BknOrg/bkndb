@@ -61,7 +61,7 @@ impl BknDb {
     pub fn join_nodes_with_table(
         &self,
         nodes: &[bkndb_core::graph::NodeId],
-        schema: &bkndb_core::relational::RelSchema,
+        schema: impl Into<bkndb_core::relational::TableSchema>,
     ) -> Result<Vec<bkndb_core::hybrid::JoinedNode>, BknError> {
         self.read_tx(|tx| tx.join_nodes_with_table(nodes, schema))
     }
@@ -72,7 +72,7 @@ impl BknDb {
     pub fn join_nodes_by_column(
         &self,
         nodes: &[bkndb_core::graph::NodeId],
-        schema: &bkndb_core::relational::RelSchema,
+        schema: impl Into<bkndb_core::relational::TableSchema>,
         foreign_key_col: &str,
     ) -> Result<Vec<bkndb_core::hybrid::JoinedNodeRows>, BknError> {
         self.read_tx(|tx| tx.join_nodes_by_column(nodes, schema, foreign_key_col))
@@ -81,7 +81,7 @@ impl BknDb {
     /// Ingests a structured batch of graph nodes, edges, and relational rows
     /// in a single atomic transaction using optimized bulk primitives.
     #[cfg(all(feature = "graph", feature = "relational-layer"))]
-    pub fn sync_batch<'a>(&self, batch: SyncBatch<'a>) -> Result<SyncBatchResult, BknError> {
+    pub fn sync_batch(&self, batch: SyncBatch) -> Result<SyncBatchResult, BknError> {
         self.inner.sync_batch(batch)
     }
 }
@@ -124,7 +124,7 @@ impl BknDb {
     pub fn join_nodes_with_table(
         &self,
         nodes: &[bkndb_core::graph::NodeId],
-        schema: &bkndb_core::relational::RelSchema,
+        schema: impl Into<bkndb_core::relational::TableSchema>,
     ) -> Result<Vec<bkndb_core::hybrid::JoinedNode>, BknError> {
         self.read_tx(|tx| tx.join_nodes_with_table(nodes, schema))
     }
@@ -133,14 +133,14 @@ impl BknDb {
     pub fn join_nodes_by_column(
         &self,
         nodes: &[bkndb_core::graph::NodeId],
-        schema: &bkndb_core::relational::RelSchema,
+        schema: impl Into<bkndb_core::relational::TableSchema>,
         foreign_key_col: &str,
     ) -> Result<Vec<bkndb_core::hybrid::JoinedNodeRows>, BknError> {
         self.read_tx(|tx| tx.join_nodes_by_column(nodes, schema, foreign_key_col))
     }
 
     #[cfg(all(feature = "graph", feature = "relational-layer"))]
-    pub fn sync_batch<'a>(&self, batch: SyncBatch<'a>) -> Result<SyncBatchResult, BknError> {
+    pub fn sync_batch(&self, batch: SyncBatch) -> Result<SyncBatchResult, BknError> {
         self.inner.sync_batch(batch)
     }
 }

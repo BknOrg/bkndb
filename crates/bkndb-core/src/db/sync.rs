@@ -1,17 +1,33 @@
 use crate::graph::{EdgeId, NodeId};
-use crate::relational::RelSchema;
+use crate::relational::TableSchema;
 use crate::value::{PropValue, Properties};
 use crate::{BknError, StorageBackend};
 use crate::db::Db;
 
 /// A structured batch of graph nodes, graph edges, and relational rows
 /// designed for high-performance atomic synchronization (e.g. codebase-recall indexing).
+///
+/// Relational rows are **upserted**: re-syncing a row whose primary key
+/// already exists replaces it (secondary indexes stay consistent) instead of
+/// failing, so the same batch can be applied repeatedly.
 #[derive(Default, Debug, Clone)]
-pub struct SyncBatch<'a> {
+pub struct SyncBatch {
     pub nodes: Vec<(String, Properties)>,
     pub edges: Vec<(NodeId, String, NodeId, Properties)>,
-    pub relational_rows: Vec<(&'a RelSchema, Vec<Properties>)>,
-    pub relational_rows_with_pk: Vec<(&'a RelSchema, Vec<(PropValue, Properties)>)>,
+    pub relational_rows: Vec<(TableSchema, Vec<Properties>)>,
+    pub relational_rows_with_pk: Vec<(TableSchema, Vec<(PropValue, Properties)>)>,
+}
+
+/// Appends `items` to the last group if it's for the same table, otherwise
+/// starts a new group — keeps consecutive rows for one table in one bulk call.
+fn push_grouped<T>(groups: &mut Vec<(TableSchema, Vec<T>)>, schema: TableSchema, items: Vec<T>) {
+    if items.is_empty() {
+        return;
+    }
+    match groups.last_mut() {
+        Some((s, existing)) if *s == schema => existing.extend(items),
+        _ => groups.push((schema, items)),
+    }
 }
 
 /// The result of executing a [`SyncBatch`], returning the sequential IDs
@@ -23,7 +39,7 @@ pub struct SyncBatchResult {
     pub relational_pks: Vec<Vec<PropValue>>,
 }
 
-impl<'a> SyncBatch<'a> {
+impl SyncBatch {
     pub fn new() -> Self {
         Self::default()
     }
@@ -61,61 +77,32 @@ impl<'a> SyncBatch<'a> {
         self
     }
 
-    /// Adds a relational row for an auto-increment or implicit PK schema.
-    pub fn add_row(&mut self, schema: &'a RelSchema, values: Properties) -> &mut Self {
-        if let Some((s, rows)) = self.relational_rows.last_mut() {
-            if std::ptr::eq(*s, schema) || s.name == schema.name {
-                rows.push(values);
-                return self;
-            }
-        }
-        self.relational_rows.push((schema, vec![values]));
+    /// Adds a relational row. On an auto-increment schema a row without a
+    /// pk gets a fresh one; a row that carries its pk is upserted.
+    pub fn add_row(&mut self, schema: impl Into<TableSchema>, values: Properties) -> &mut Self {
+        push_grouped(&mut self.relational_rows, schema.into(), vec![values]);
         self
     }
 
-    /// Adds multiple relational rows for an auto-increment or implicit PK schema.
-    pub fn add_rows(&mut self, schema: &'a RelSchema, rows: impl IntoIterator<Item = Properties>) -> &mut Self {
-        let items: Vec<Properties> = rows.into_iter().collect();
-        if !items.is_empty() {
-            if let Some((s, existing)) = self.relational_rows.last_mut() {
-                if std::ptr::eq(*s, schema) || s.name == schema.name {
-                    existing.extend(items);
-                    return self;
-                }
-            }
-            self.relational_rows.push((schema, items));
-        }
+    /// Adds multiple relational rows (see [`SyncBatch::add_row`]).
+    pub fn add_rows(&mut self, schema: impl Into<TableSchema>, rows: impl IntoIterator<Item = Properties>) -> &mut Self {
+        push_grouped(&mut self.relational_rows, schema.into(), rows.into_iter().collect());
         self
     }
 
     /// Adds a relational row with an explicit caller-specified PK (e.g. NodeId).
-    pub fn add_row_with_pk(&mut self, schema: &'a RelSchema, pk: PropValue, values: Properties) -> &mut Self {
-        if let Some((s, rows)) = self.relational_rows_with_pk.last_mut() {
-            if std::ptr::eq(*s, schema) || s.name == schema.name {
-                rows.push((pk, values));
-                return self;
-            }
-        }
-        self.relational_rows_with_pk.push((schema, vec![(pk, values)]));
+    pub fn add_row_with_pk(&mut self, schema: impl Into<TableSchema>, pk: PropValue, values: Properties) -> &mut Self {
+        push_grouped(&mut self.relational_rows_with_pk, schema.into(), vec![(pk, values)]);
         self
     }
 
     /// Adds multiple relational rows with explicit caller-specified PKs.
     pub fn add_rows_with_pk(
         &mut self,
-        schema: &'a RelSchema,
+        schema: impl Into<TableSchema>,
         rows: impl IntoIterator<Item = (PropValue, Properties)>,
     ) -> &mut Self {
-        let items: Vec<(PropValue, Properties)> = rows.into_iter().collect();
-        if !items.is_empty() {
-            if let Some((s, existing)) = self.relational_rows_with_pk.last_mut() {
-                if std::ptr::eq(*s, schema) || s.name == schema.name {
-                    existing.extend(items);
-                    return self;
-                }
-            }
-            self.relational_rows_with_pk.push((schema, items));
-        }
+        push_grouped(&mut self.relational_rows_with_pk, schema.into(), rows.into_iter().collect());
         self
     }
 }
@@ -123,7 +110,8 @@ impl<'a> SyncBatch<'a> {
 impl<B: StorageBackend> Db<B> {
     /// Executes a [`SyncBatch`] within a single ACID write transaction using bulk primitives.
     /// Reserves sequential node, edge, and relational PKs with minimal counter updates.
-    pub fn sync_batch<'a>(&self, batch: SyncBatch<'a>) -> Result<SyncBatchResult, BknError> {
+    /// Relational rows are upserted (see [`SyncBatch`]).
+    pub fn sync_batch(&self, batch: SyncBatch) -> Result<SyncBatchResult, BknError> {
         self.write_tx(|wbatch| {
             let mut graph = wbatch.graph();
             let node_ids = graph.create_nodes_bulk(batch.nodes)?;
@@ -134,13 +122,13 @@ impl<B: StorageBackend> Db<B> {
             let mut relational_pks = Vec::with_capacity(batch.relational_rows.len());
             for (schema, rows) in batch.relational_rows {
                 let mut tbl = relational.table(schema);
-                let pks = tbl.insert_bulk(rows)?;
+                let pks = tbl.upsert_bulk(rows)?;
                 relational_pks.push(pks);
             }
 
             for (schema, rows) in batch.relational_rows_with_pk {
                 let mut tbl = relational.table(schema);
-                tbl.insert_with_pk_bulk(rows)?;
+                tbl.upsert_with_pk_bulk(rows)?;
             }
 
             Ok(SyncBatchResult {

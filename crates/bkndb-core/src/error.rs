@@ -3,18 +3,20 @@ use std::fmt;
 #[derive(Debug)]
 pub enum BknError {
     Backend(String),
-    TableNotFound(&'static str),
+    TableNotFound(String),
     NotFound,
     Encoding(String),
-    ReservedTableName(&'static str),
+    ReservedTableName(String),
     /// Another handle (in this or another process) already has the
     /// database file open for writing. Carries the path that was locked.
     DatabaseLocked(String),
     /// An insert with an explicit primary key collided with an existing row.
-    DuplicateKey { table: &'static str, key: String },
+    DuplicateKey { table: String, key: String },
     /// A row's value doesn't match its declared column kind, or names a
     /// column the schema doesn't declare.
-    SchemaMismatch { table: &'static str, message: String },
+    SchemaMismatch { table: String, message: String },
+    /// A NOT NULL or UNIQUE constraint would be violated.
+    ConstraintViolation { table: String, message: String },
 }
 
 impl fmt::Display for BknError {
@@ -36,6 +38,9 @@ impl fmt::Display for BknError {
             }
             BknError::SchemaMismatch { table, message } => {
                 write!(f, "schema mismatch in table '{table}': {message}")
+            }
+            BknError::ConstraintViolation { table, message } => {
+                write!(f, "constraint violation in table '{table}': {message}")
             }
         }
     }

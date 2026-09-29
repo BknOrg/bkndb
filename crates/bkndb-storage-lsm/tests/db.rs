@@ -39,3 +39,15 @@ fn lsm_backend_satisfies_batch_sync_bulk_conformance_suite() {
     batch_sync_bulk_conformance_suite(backend);
 }
 
+
+#[test]
+fn lsm_backend_satisfies_sync_batch_upsert_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::sync_batch_upsert_suite(LsmStorageBackend::open(dir.path().join("sync_upsert.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_hybrid_query_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::hybrid_query_suite(LsmStorageBackend::open(dir.path().join("hybrid_query.bkndb")).unwrap());
+}

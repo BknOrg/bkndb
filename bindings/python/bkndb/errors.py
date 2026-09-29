@@ -67,6 +67,14 @@ class SchemaMismatchError(BknDbError):
         self.table = table
 
 
+class ConstraintViolationError(BknDbError):
+    """A NOT NULL or UNIQUE constraint would be violated."""
+
+    def __init__(self, table: str, message: str) -> None:
+        super().__init__(f"constraint violation in table '{table}': {message}")
+        self.table = table
+
+
 def translate(exc: FfiBknError) -> BknDbError:
     """Converts a raw ``FfiBknError`` into the matching public exception."""
     if isinstance(exc, FfiBknError.Backend):
@@ -85,4 +93,6 @@ def translate(exc: FfiBknError) -> BknDbError:
         return DuplicateKeyError(exc.table, exc.key)
     if isinstance(exc, FfiBknError.SchemaMismatch):
         return SchemaMismatchError(exc.table, exc.message)
+    if isinstance(exc, FfiBknError.ConstraintViolation):
+        return ConstraintViolationError(exc.table, exc.message)
     return BknDbError(str(exc))

@@ -16,20 +16,23 @@ pub enum FfiBknError {
     DuplicateKey { table: String, key: String },
     #[error("Schema mismatch in table '{table}': {message}")]
     SchemaMismatch { table: String, message: String },
+    #[error("Constraint violation in table '{table}': {message}")]
+    ConstraintViolation { table: String, message: String },
 }
 
 impl From<bkndb_core::BknError> for FfiBknError {
     fn from(err: bkndb_core::BknError) -> Self {
         match err {
             bkndb_core::BknError::Backend(msg) => FfiBknError::Backend { message: msg },
-            bkndb_core::BknError::TableNotFound(t) => FfiBknError::TableNotFound { table: t.to_string() },
+            bkndb_core::BknError::TableNotFound(table) => FfiBknError::TableNotFound { table },
             bkndb_core::BknError::NotFound => FfiBknError::NotFound,
             bkndb_core::BknError::Encoding(msg) => FfiBknError::Encoding { message: msg },
-            bkndb_core::BknError::ReservedTableName(t) => FfiBknError::ReservedTableName { table: t.to_string() },
+            bkndb_core::BknError::ReservedTableName(table) => FfiBknError::ReservedTableName { table },
             bkndb_core::BknError::DatabaseLocked(path) => FfiBknError::DatabaseLocked { path },
-            bkndb_core::BknError::DuplicateKey { table, key } => FfiBknError::DuplicateKey { table: table.to_string(), key },
-            bkndb_core::BknError::SchemaMismatch { table, message } => {
-                FfiBknError::SchemaMismatch { table: table.to_string(), message }
+            bkndb_core::BknError::DuplicateKey { table, key } => FfiBknError::DuplicateKey { table, key },
+            bkndb_core::BknError::SchemaMismatch { table, message } => FfiBknError::SchemaMismatch { table, message },
+            bkndb_core::BknError::ConstraintViolation { table, message } => {
+                FfiBknError::ConstraintViolation { table, message }
             }
         }
     }

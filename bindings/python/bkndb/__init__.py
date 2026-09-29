@@ -17,6 +17,7 @@ from .database import Database
 from .errors import (
     BackendError,
     BknDbError,
+    ConstraintViolationError,
     DatabaseLockedError,
     DuplicateKeyError,
     EncodingError,
@@ -53,6 +54,7 @@ __all__ = [
     "NotFoundError",
     "EncodingError",
     "ReservedTableNameError",
+    "ConstraintViolationError",
     "DatabaseLockedError",
     "DuplicateKeyError",
     "SchemaMismatchError",

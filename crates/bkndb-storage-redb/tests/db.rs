@@ -38,3 +38,15 @@ fn redb_backend_satisfies_batch_sync_bulk_conformance_suite() {
     let backend = RedbStorageBackend::open(dir.path().join("batch_sync_test.bkndb")).unwrap();
     batch_sync_bulk_conformance_suite(backend);
 }
+
+#[test]
+fn redb_backend_satisfies_sync_batch_upsert_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::sync_batch_upsert_suite(RedbStorageBackend::open(dir.path().join("sync_upsert.redb")).unwrap());
+}
+
+#[test]
+fn redb_backend_satisfies_hybrid_query_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::hybrid_query_suite(RedbStorageBackend::open(dir.path().join("hybrid_query.redb")).unwrap());
+}

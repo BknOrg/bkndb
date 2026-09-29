@@ -1535,16 +1535,25 @@ pub fn batch_sync_bulk_conformance_suite<B: StorageBackend>(backend: B) {
 /// validation — regressions for overwrites that used to leave stale index
 /// entries behind and for writes that silently accepted any value.
 pub fn relational_integrity_suite<B: StorageBackend>(backend: B) {
+    use crate::BknError;
     use crate::relational::{ColumnDef, ColumnKind, RelSchema, RelationalDb};
     use crate::value::{PropValue, Properties};
-    use crate::BknError;
 
     static PEOPLE: RelSchema = RelSchema {
         name: "people",
         columns: &[
-            ColumnDef { name: "id", kind: ColumnKind::Int },
-            ColumnDef { name: "city", kind: ColumnKind::Str },
-            ColumnDef { name: "age", kind: ColumnKind::Int },
+            ColumnDef {
+                name: "id",
+                kind: ColumnKind::Int,
+            },
+            ColumnDef {
+                name: "city",
+                kind: ColumnKind::Str,
+            },
+            ColumnDef {
+                name: "age",
+                kind: ColumnKind::Int,
+            },
         ],
         primary_key: "id",
         auto_increment_pk: false,
@@ -1562,29 +1571,57 @@ pub fn relational_integrity_suite<B: StorageBackend>(backend: B) {
     let t = db.table(&PEOPLE);
 
     // Duplicate PK on plain insert is rejected and leaves the row untouched.
-    t.insert_with_pk(PropValue::Int(1), row("Jakarta", 30)).unwrap();
+    t.insert_with_pk(PropValue::Int(1), row("Jakarta", 30))
+        .unwrap();
     assert!(matches!(
         t.insert_with_pk(PropValue::Int(1), row("Bandung", 99)),
-        Err(BknError::DuplicateKey { table: "people", .. })
+        Err(BknError::DuplicateKey { ref table, .. }) if table == "people"
     ));
-    assert_eq!(t.get(&PropValue::Int(1)).unwrap().unwrap().values, row("Jakarta", 30));
+    assert_eq!(
+        t.get(&PropValue::Int(1)).unwrap().unwrap().values,
+        row("Jakarta", 30)
+    );
 
     // Duplicates inside one bulk insert are caught too, and roll the whole
     // batch back.
-    let bulk = vec![(PropValue::Int(2), row("Medan", 1)), (PropValue::Int(2), row("Medan", 2))];
-    assert!(matches!(t.insert_with_pk_bulk(bulk), Err(BknError::DuplicateKey { .. })));
+    let bulk = vec![
+        (PropValue::Int(2), row("Medan", 1)),
+        (PropValue::Int(2), row("Medan", 2)),
+    ];
+    assert!(matches!(
+        t.insert_with_pk_bulk(bulk),
+        Err(BknError::DuplicateKey { .. })
+    ));
     assert!(t.get(&PropValue::Int(2)).unwrap().is_none());
 
     // Upsert replaces the row and moves its index entry.
-    t.upsert_with_pk(PropValue::Int(1), row("Bandung", 31)).unwrap();
-    assert!(t.select().where_eq("city", PropValue::Str("Jakarta".into())).run().unwrap().is_empty());
-    let hits = t.select().where_eq("city", PropValue::Str("Bandung".into())).run().unwrap();
+    t.upsert_with_pk(PropValue::Int(1), row("Bandung", 31))
+        .unwrap();
+    assert!(
+        t.select()
+            .where_eq("city", PropValue::Str("Jakarta".into()))
+            .run()
+            .unwrap()
+            .is_empty()
+    );
+    let hits = t
+        .select()
+        .where_eq("city", PropValue::Str("Bandung".into()))
+        .run()
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].pk, PropValue::Int(1));
     db.write_tx(|tx| {
         let tbl = tx.table(&PEOPLE);
-        assert!(tbl.select_eq("city", &PropValue::Str("Jakarta".into()))?.is_empty());
-        assert_eq!(tbl.select_eq("city", &PropValue::Str("Bandung".into()))?.len(), 1);
+        assert!(
+            tbl.select_eq("city", &PropValue::Str("Jakarta".into()))?
+                .is_empty()
+        );
+        assert_eq!(
+            tbl.select_eq("city", &PropValue::Str("Bandung".into()))?
+                .len(),
+            1
+        );
         Ok(())
     })
     .unwrap();
@@ -1594,12 +1631,18 @@ pub fn relational_integrity_suite<B: StorageBackend>(backend: B) {
     wrong_kind.insert("age".to_string(), PropValue::Str("old".into()));
     assert!(matches!(
         t.insert_with_pk(PropValue::Int(3), wrong_kind),
-        Err(BknError::SchemaMismatch { table: "people", .. })
+        Err(BknError::SchemaMismatch { ref table, .. }) if table == "people"
     ));
     let mut undeclared = row("Surabaya", 0);
     undeclared.insert("nickname".to_string(), PropValue::Str("x".into()));
-    assert!(matches!(t.insert_with_pk(PropValue::Int(3), undeclared), Err(BknError::SchemaMismatch { .. })));
-    assert!(matches!(t.insert_with_pk(PropValue::Str("3".into()), row("Surabaya", 0)), Err(BknError::SchemaMismatch { .. })));
+    assert!(matches!(
+        t.insert_with_pk(PropValue::Int(3), undeclared),
+        Err(BknError::SchemaMismatch { .. })
+    ));
+    assert!(matches!(
+        t.insert_with_pk(PropValue::Str("3".into()), row("Surabaya", 0)),
+        Err(BknError::SchemaMismatch { .. })
+    ));
     // Null is accepted in any non-pk column.
     let mut with_null = row("Surabaya", 0);
     with_null.insert("age".to_string(), PropValue::Null);
@@ -1607,13 +1650,375 @@ pub fn relational_integrity_suite<B: StorageBackend>(backend: B) {
 
     // Updates are validated as well, and a rejected update changes nothing.
     assert!(matches!(
-        t.update().where_eq("city", PropValue::Str("Bandung".into())).set("age", PropValue::Bool(true)).run(),
+        t.update()
+            .where_eq("city", PropValue::Str("Bandung".into()))
+            .set("age", PropValue::Bool(true))
+            .run(),
         Err(BknError::SchemaMismatch { .. })
     ));
-    assert_eq!(t.get(&PropValue::Int(1)).unwrap().unwrap().values, row("Bandung", 31));
+    assert_eq!(
+        t.get(&PropValue::Int(1)).unwrap().unwrap().values,
+        row("Bandung", 31)
+    );
 
     // Predicate update/delete still work end to end.
-    assert_eq!(t.update().where_eq("city", PropValue::Str("Bandung".into())).set("age", PropValue::Int(32)).run().unwrap(), 1);
-    assert_eq!(t.delete().where_eq("city", PropValue::Str("Surabaya".into())).run().unwrap(), 1);
+    assert_eq!(
+        t.update()
+            .where_eq("city", PropValue::Str("Bandung".into()))
+            .set("age", PropValue::Int(32))
+            .run()
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        t.delete()
+            .where_eq("city", PropValue::Str("Surabaya".into()))
+            .run()
+            .unwrap(),
+        1
+    );
     assert!(t.get(&PropValue::Int(3)).unwrap().is_none());
+}
+
+/// Runtime schemas: catalog registration, NOT NULL / UNIQUE / DEFAULT,
+/// migrations via `ensure_table`, and adopting a table previously used only
+/// through a static `RelSchema`.
+pub fn relational_catalog_suite<B: StorageBackend>(backend: B) {
+    use crate::relational::{col, ColumnDef, ColumnKind, ColumnSchema, RelSchema, RelationalDb, TableSchema};
+    use crate::value::{PropValue, Properties};
+    use crate::BknError;
+
+    fn props(pairs: &[(&str, PropValue)]) -> Properties {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
+    let db = RelationalDb::new(backend);
+    let users = TableSchema::builder("users")
+        .column(ColumnSchema::new("id", ColumnKind::Int))
+        .column(ColumnSchema::new("email", ColumnKind::Str).not_null().unique())
+        .column(ColumnSchema::new("role", ColumnKind::Str).default_value("member"))
+        .primary_key("id")
+        .auto_increment()
+        .build()
+        .unwrap();
+
+    // Catalog registration is idempotent for identical definitions.
+    assert!(db.create_table(&users).unwrap());
+    assert!(!db.create_table(&users).unwrap());
+    let changed = users.to_builder().column(ColumnSchema::new("age", ColumnKind::Int)).build().unwrap();
+    assert!(matches!(db.create_table(&changed), Err(BknError::SchemaMismatch { .. })));
+    assert_eq!(db.list_tables().unwrap(), vec![users.clone()]);
+    assert_eq!(db.table_schema("users").unwrap(), Some(users.clone()));
+    assert!(matches!(db.table_named("nope"), Err(BknError::TableNotFound(_))));
+
+    // DEFAULT, NOT NULL, UNIQUE.
+    let t = db.table_named("users").unwrap();
+    let alice = t.insert(props(&[("email", "a@x.io".into())])).unwrap();
+    assert_eq!(t.get(&alice).unwrap().unwrap().values.get("role"), Some(&PropValue::from("member")));
+    assert!(matches!(t.insert(props(&[("role", "admin".into())])), Err(BknError::ConstraintViolation { .. })));
+    assert!(matches!(
+        t.insert(props(&[("email", "a@x.io".into())])),
+        Err(BknError::ConstraintViolation { .. })
+    ));
+    let bob = t.insert(props(&[("email", "b@x.io".into())])).unwrap();
+    assert!(matches!(
+        t.update().where_eq("id", bob.clone()).set("email", "a@x.io").run(),
+        Err(BknError::ConstraintViolation { .. })
+    ));
+    // Re-setting a row's own unique value is fine.
+    assert_eq!(t.update().where_eq("id", bob.clone()).set("email", "b@x.io").run().unwrap(), 1);
+
+    // Upsert with an explicit pk on an auto-increment table moves the
+    // counter past it, so later inserts never collide.
+    t.upsert(props(&[("id", 100.into()), ("email", "c@x.io".into())])).unwrap();
+    let next = t.insert(props(&[("email", "d@x.io".into())])).unwrap();
+    assert_eq!(next, PropValue::Int(101));
+
+    // Migration: add a column with a default (backfilled), index it, drop `role`.
+    let v2 = users
+        .to_builder()
+        .column(ColumnSchema::new("score", ColumnKind::Int).not_null().default_value(0))
+        .index("score")
+        .drop_column("role")
+        .build()
+        .unwrap();
+    db.ensure_table(&v2).unwrap();
+    let t = db.table_named("users").unwrap();
+    let a = t.get(&alice).unwrap().unwrap();
+    assert_eq!(a.values.get("score"), Some(&PropValue::Int(0)));
+    assert!(!a.values.contains_key("role"));
+    assert_eq!(t.select().where_eq("score", 0).count().unwrap(), 4);
+
+    // Failed migrations are atomic: making `score` UNIQUE fails on duplicates
+    // and leaves the old definition in place.
+    let bad = v2
+        .to_builder()
+        .column(ColumnSchema::new("score", ColumnKind::Int).not_null().unique().default_value(0))
+        .build()
+        .unwrap();
+    assert!(matches!(db.ensure_table(&bad), Err(BknError::ConstraintViolation { .. })));
+    assert_eq!(db.table_schema("users").unwrap(), Some(v2.clone()));
+    let kind_change = v2.to_builder().column(ColumnSchema::new("score", ColumnKind::Str)).build().unwrap();
+    assert!(matches!(db.ensure_table(&kind_change), Err(BknError::SchemaMismatch { .. })));
+
+    db.create_index("users", "email").unwrap(); // already indexed via UNIQUE: no-op
+    db.drop_index("users", "score").unwrap();
+    assert!(!db.table_schema("users").unwrap().unwrap().is_indexed("score"));
+    // `t` came from table_named, so it follows the migration; a handle built
+    // from the now-outdated explicit schema refuses to run instead of
+    // querying the dropped index.
+    assert_eq!(t.select().filter(col("score").eq(0)).count().unwrap(), 4);
+    assert!(matches!(db.table(&v2).select().count(), Err(BknError::SchemaMismatch { .. })));
+
+    assert!(db.drop_table("users").unwrap());
+    assert!(!db.drop_table("users").unwrap());
+    assert!(db.list_tables().unwrap().is_empty());
+    let recreated = db.table(&users);
+    assert!(recreated.select().run().unwrap().is_empty());
+    assert_eq!(recreated.insert(props(&[("email", "z@x.io".into())])).unwrap(), PropValue::Int(1));
+
+    // Adopting a legacy static table rebuilds indexes that were added to the
+    // static schema after rows existed (they were never backfilled).
+    static LEGACY_V1: RelSchema = RelSchema {
+        name: "legacy",
+        columns: &[ColumnDef { name: "id", kind: ColumnKind::Int }, ColumnDef { name: "tag", kind: ColumnKind::Str }],
+        primary_key: "id",
+        auto_increment_pk: true,
+        indexed_columns: &[],
+    };
+    static LEGACY_V2: RelSchema = RelSchema { indexed_columns: &["tag"], ..LEGACY_V1 };
+    db.table(&LEGACY_V1).insert(props(&[("tag", "old".into())])).unwrap();
+    assert!(db.table(&LEGACY_V2).select().where_eq("tag", "old").run().unwrap().is_empty(), "index not backfilled yet");
+    db.ensure_table(&LEGACY_V2).unwrap();
+    assert_eq!(db.table(&LEGACY_V2).select().where_eq("tag", "old").run().unwrap().len(), 1);
+}
+
+/// The query engine: expression filters, ordering, paging, projection and
+/// aggregation, over pk, index and scan access paths.
+pub fn relational_query_suite<B: StorageBackend>(backend: B) {
+    use crate::relational::{col, Agg, AggregateRow, ColumnKind, ColumnSchema, Query, RelationalDb, Row, TableSchema};
+    use crate::value::{PropValue, Properties};
+    use crate::BknError;
+
+    let db = RelationalDb::new(backend);
+    let items = TableSchema::builder("items")
+        .column(ColumnSchema::new("id", ColumnKind::Int))
+        .column(ColumnSchema::new("cat", ColumnKind::Str))
+        .column(ColumnSchema::new("price", ColumnKind::Int))
+        .column(ColumnSchema::new("weight", ColumnKind::Float))
+        .column(ColumnSchema::new("note", ColumnKind::Str))
+        .primary_key("id")
+        .index("cat")
+        .index("price")
+        .build()
+        .unwrap();
+    db.create_table(&items).unwrap();
+    let t = db.table(&items);
+    let data: [(i64, &str, i64, f64, Option<&str>); 6] = [
+        (1, "fruit", 10, 0.5, Some("fresh")),
+        (2, "fruit", 30, 1.5, None),
+        (3, "veg", 20, 2.0, Some("organic")),
+        (4, "veg", 40, 1.0, None),
+        (5, "meat", 50, 3.0, Some("frozen")),
+        (6, "fruit", 20, 0.25, None),
+    ];
+    for (id, cat, price, weight, note) in data {
+        let mut p = Properties::new();
+        p.insert("id".into(), id.into());
+        p.insert("cat".into(), cat.into());
+        p.insert("price".into(), price.into());
+        p.insert("weight".into(), weight.into());
+        p.insert("note".into(), note.into());
+        t.insert(p).unwrap();
+    }
+    fn ids(rows: Vec<Row>) -> Vec<i64> {
+        rows.into_iter()
+            .map(|r| match r.pk {
+                PropValue::Int(i) => i,
+                other => panic!("unexpected pk {other:?}"),
+            })
+            .collect()
+    }
+
+    // Access paths: pk eq / IN / range, index eq / IN / range / prefix, scan.
+    assert_eq!(ids(t.select().where_eq("id", 3).run().unwrap()), vec![3]);
+    assert_eq!(ids(t.select().filter(col("id").is_in([5, 1, 5, 99])).order_by_asc("id").run().unwrap()), vec![1, 5]);
+    assert_eq!(ids(t.select().filter(col("id").gt(2).and(col("id").le(4))).run().unwrap()), vec![3, 4]);
+    assert_eq!(ids(t.select().where_eq("cat", "veg").order_by_asc("id").run().unwrap()), vec![3, 4]);
+    assert_eq!(ids(t.select().filter(col("cat").is_in(["meat", "veg"])).order_by_asc("id").run().unwrap()), vec![3, 4, 5]);
+    assert_eq!(ids(t.select().filter(col("price").between(20, 30)).order_by_asc("id").run().unwrap()), vec![2, 3, 6]);
+    assert_eq!(
+        ids(t
+            .select()
+            .where_range("price", Bound::Excluded(20.into()), Bound::Unbounded)
+            .order_by_asc("id")
+            .run()
+            .unwrap()),
+        vec![2, 4, 5]
+    );
+    assert_eq!(ids(t.select().where_prefix("cat", "fr").order_by_asc("id").run().unwrap()), vec![1, 2, 6]);
+    // Range on an unindexed column works too (scan), comparing Float to Int.
+    assert_eq!(ids(t.select().filter(col("weight").lt(1)).order_by_asc("id").run().unwrap()), vec![1, 6]);
+
+    // Boolean logic and null handling.
+    let q = col("cat").eq("fruit").and(col("price").ge(20)).or(col("cat").eq("meat"));
+    assert_eq!(ids(t.select().filter(q).order_by_asc("id").run().unwrap()), vec![2, 5, 6]);
+    assert_eq!(ids(t.select().filter(col("cat").eq("fruit").not()).order_by_asc("id").run().unwrap()), vec![3, 4, 5]);
+    assert_eq!(ids(t.select().filter(col("cat").ne("fruit")).order_by_asc("id").run().unwrap()), vec![3, 4, 5]);
+    assert_eq!(ids(t.select().filter(col("note").is_null()).order_by_asc("id").run().unwrap()), vec![2, 4, 6]);
+    assert_eq!(ids(t.select().filter(col("note").is_not_null()).order_by_asc("id").run().unwrap()), vec![1, 3, 5]);
+    assert_eq!(t.select().filter(col("note").gt("a")).count().unwrap(), 3, "null never compares");
+
+    // Ordering (multi-key, desc), offset, limit, projection.
+    assert_eq!(ids(t.select().order_by_asc("cat").order_by_desc("price").run().unwrap()), vec![2, 6, 1, 5, 4, 3]);
+    assert_eq!(ids(t.select().order_by_desc("price").offset(1).limit(2).run().unwrap()), vec![4, 2]);
+    assert!(t.select().order_by_desc("price").offset(10).run().unwrap().is_empty());
+    assert_eq!(t.select().limit(3).run().unwrap().len(), 3);
+    assert_eq!(ids(t.select().offset(4).run().unwrap()), vec![5, 6]);
+    let projected = t.select().where_eq("id", 1).columns(["price"]).run().unwrap();
+    assert_eq!(projected[0].values.keys().collect::<Vec<_>>(), vec!["price"]);
+    assert_eq!(projected[0].pk, PropValue::Int(1));
+
+    // Unknown columns are reported rather than silently matching nothing.
+    assert!(matches!(t.select().where_eq("colour", "red").run(), Err(BknError::SchemaMismatch { .. })));
+
+    // Aggregates.
+    assert_eq!(t.select().count().unwrap(), 6);
+    assert_eq!(
+        t.select()
+            .where_eq("cat", "fruit")
+            .aggregate(&[
+                Agg::count(),
+                Agg::sum("price"),
+                Agg::avg("price"),
+                Agg::min("weight"),
+                Agg::max("price"),
+                Agg::count_column("note"),
+            ])
+            .unwrap(),
+        vec![
+            PropValue::Int(3),
+            PropValue::Int(60),
+            PropValue::Float(20.0),
+            PropValue::Float(0.25),
+            PropValue::Int(30),
+            PropValue::Int(1),
+        ]
+    );
+    assert_eq!(
+        t.select().where_eq("cat", "none").aggregate(&[Agg::count(), Agg::sum("price")]).unwrap(),
+        vec![PropValue::Int(0), PropValue::Null]
+    );
+    assert_eq!(
+        t.select().aggregate_by(&["cat"], &[Agg::count(), Agg::sum("weight")]).unwrap(),
+        vec![
+            AggregateRow { group: vec!["fruit".into()], values: vec![PropValue::Int(3), PropValue::Float(2.25)] },
+            AggregateRow { group: vec!["meat".into()], values: vec![PropValue::Int(1), PropValue::Float(3.0)] },
+            AggregateRow { group: vec!["veg".into()], values: vec![PropValue::Int(2), PropValue::Float(3.0)] },
+        ]
+    );
+    assert!(matches!(t.select().aggregate(&[Agg::sum("cat")]), Err(BknError::SchemaMismatch { .. })));
+
+    // The same Query runs inside transactions; update/delete honor it.
+    db.write_tx(|tx| {
+        let mut tbl = tx.table(&items);
+        let cheap = Query::new().filter(col("price").lt(25));
+        assert_eq!(tbl.count(&cheap)?, 3);
+        assert_eq!(tbl.update_where(&cheap, &[("note", "sale".into())])?, 3);
+        assert_eq!(tbl.find(&Query::new().where_eq("note", "sale"))?.len(), 3);
+        assert_eq!(tbl.delete_where(&Query::new().where_eq("cat", "meat"))?, 1);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(t.select().count().unwrap(), 5);
+    assert_eq!(t.select().where_eq("note", "sale").count().unwrap(), 3);
+    assert_eq!(t.delete().filter(col("price").ge(30)).run().unwrap(), 2);
+    assert_eq!(ids(t.select().order_by_asc("id").run().unwrap()), vec![1, 3, 6]);
+}
+
+/// `sync_batch` upserts relational rows, so re-applying a batch is safe.
+pub fn sync_batch_upsert_suite<B: StorageBackend>(backend: B) {
+    use crate::db::{Db, SyncBatch};
+    use crate::relational::{ColumnKind, ColumnSchema, TableSchema};
+    use crate::value::{PropValue, Properties};
+
+    let db = Db::new(backend);
+    let files = TableSchema::builder("files")
+        .column(ColumnSchema::new("path", ColumnKind::Str))
+        .column(ColumnSchema::new("lang", ColumnKind::Str))
+        .primary_key("path")
+        .index("lang")
+        .build()
+        .unwrap();
+    let row = |path: &str, lang: &str| -> Properties {
+        [("path".to_string(), PropValue::from(path)), ("lang".to_string(), PropValue::from(lang))]
+            .into_iter()
+            .collect()
+    };
+
+    let mut first = SyncBatch::new();
+    first.add_rows(&files, [row("a.rs", "rust"), row("b.py", "python")]);
+    db.sync_batch(first).unwrap();
+
+    let mut again = SyncBatch::new();
+    again.add_rows(&files, [row("a.rs", "rust"), row("b.py", "rust")]);
+    again.add_row_with_pk(&files, "c.go".into(), row("c.go", "go"));
+    db.sync_batch(again).unwrap();
+
+    let rel = db.relational();
+    let t = rel.table(&files);
+    assert_eq!(t.select().count().unwrap(), 3);
+    assert_eq!(t.select().where_eq("lang", "rust").count().unwrap(), 2);
+    assert_eq!(t.select().where_eq("lang", "python").count().unwrap(), 0, "old index entry replaced");
+}
+
+/// Hybrid joins driven by relational queries, and foreign-key joins over an
+/// unindexed column.
+pub fn hybrid_query_suite<B: StorageBackend>(backend: B) {
+    use crate::db::Db;
+    use crate::relational::{col, ColumnKind, ColumnSchema, Query, TableSchema};
+    use crate::value::{PropValue, Properties};
+
+    let db = Db::new(backend);
+    let (a, b) = db
+        .write_tx(|tx| {
+            let mut g = tx.graph();
+            let a = g.create_node("File", Properties::new())?;
+            let b = g.create_node("File", Properties::new())?;
+            Ok((a, b))
+        })
+        .unwrap();
+
+    // `file_node` is deliberately not indexed.
+    let symbols = TableSchema::builder("symbols")
+        .column(ColumnSchema::new("id", ColumnKind::Int))
+        .column(ColumnSchema::new("name", ColumnKind::Str))
+        .column(ColumnSchema::new("file_node", ColumnKind::Int))
+        .primary_key("id")
+        .auto_increment()
+        .build()
+        .unwrap();
+    let rel = db.relational();
+    rel.create_table(&symbols).unwrap();
+    let t = rel.table_named("symbols").unwrap();
+    for (name, node) in [("main", a), ("helper", a), ("parse", b)] {
+        let mut p = Properties::new();
+        p.insert("name".into(), name.into());
+        p.insert("file_node".into(), PropValue::Int(node.0 as i64));
+        t.insert(p).unwrap();
+    }
+
+    db.read_tx(|tx| {
+        let joined = tx.join_nodes_by_column(&[a, b], &symbols, "file_node")?;
+        assert_eq!(joined[0].rows.len(), 2);
+        assert_eq!(joined[1].rows.len(), 1);
+        assert!(joined[0].node.is_some());
+
+        let hits = tx.query_rows_with_nodes(&symbols, &Query::new().filter(col("name").starts_with("p")), "file_node")?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.values.get("name"), Some(&PropValue::from("parse")));
+        assert!(hits[0].1.is_some(), "row should resolve to its graph node");
+        Ok(())
+    })
+    .unwrap();
 }
