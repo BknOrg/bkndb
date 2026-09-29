@@ -161,7 +161,6 @@ impl<B: StorageBackend> Db<B> {
                 edges.push((from.resolve(&node_ids)?, edge_type, to.resolve(&node_ids)?, props));
             }
             let edge_ids = graph.create_edges_bulk(edges)?;
-            drop(graph);
 
             let mut relational = wbatch.relational();
             let mut relational_pks = Vec::with_capacity(batch.relational_rows.len());

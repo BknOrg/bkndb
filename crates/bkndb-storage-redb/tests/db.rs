@@ -80,3 +80,9 @@ fn redb_backend_satisfies_search_suite() {
     let dir = tempfile::tempdir().unwrap();
     bkndb_core::test_util::search_suite(bkndb_storage_redb::RedbStorageBackend::open(dir.path().join("search.bkndb")).unwrap());
 }
+
+#[test]
+fn redb_backend_satisfies_ann_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::ann_suite(bkndb_storage_redb::RedbStorageBackend::open(dir.path().join("ann.bkndb")).unwrap());
+}

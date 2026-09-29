@@ -1,7 +1,7 @@
 use std::ops::Bound;
 use std::path::Path;
 
-use bkndb_core::{BknError, KvIter, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+use bkndb_core::{BknError, KvIter, KvPairs, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 use redb::{Database, ReadTransaction, ReadableTable, TableError, WriteTransaction};
 
 /// Disk-backed storage engine used on desktop, mobile, and embedded Linux.
@@ -84,7 +84,7 @@ impl StorageReadTx for RedbReadTx<'_> {
         table: TableSpec,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    ) -> Result<KvPairs, BknError> {
         let def = table_def(table);
         let redb_table = match self.tx.open_table(def) {
             Ok(t) => t,
@@ -140,7 +140,7 @@ impl StorageReadTx for RedbWriteTx<'_> {
         table: TableSpec,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    ) -> Result<KvPairs, BknError> {
         let def = table_def(table);
         let redb_table = match self.tx.open_table(def) {
             Ok(t) => t,

@@ -64,3 +64,8 @@ fn mem_backend_satisfies_graph_query_suite() {
 fn mem_backend_satisfies_search_suite() {
     bkndb_core::test_util::search_suite(bkndb_storage_mem::MemoryStorageBackend::new());
 }
+
+#[test]
+fn mem_backend_satisfies_ann_suite() {
+    bkndb_core::test_util::ann_suite(bkndb_storage_mem::MemoryStorageBackend::new());
+}

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
-use bkndb_core::{BknError, KvIter, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+use bkndb_core::{BknError, KvIter, KvPairs, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 
 type Table = BTreeMap<Vec<u8>, Vec<u8>>;
 /// Each table sits behind its own `Arc`, so a commit that clones the map
@@ -114,7 +114,7 @@ impl StorageReadTx for MemReadTx {
         Ok(snapshot_get(&self.snapshot, table, key))
     }
 
-    fn range(&self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    fn range(&self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<KvPairs, BknError> {
         snapshot_scan(&self.snapshot, table, start, end).collect()
     }
 
@@ -131,7 +131,7 @@ impl StorageReadTx for MemWriteTx<'_> {
         Ok(snapshot_get(&self.snapshot, table, key))
     }
 
-    fn range(&self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    fn range(&self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<KvPairs, BknError> {
         let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = snapshot_scan(&self.snapshot, table, start, end).collect::<Result<_, _>>()?;
 
         let (lo, hi) = (owned_bound(start), owned_bound(end));

@@ -22,4 +22,4 @@ pub use db::{Db, DbReadBatch, DbStats, DbWriteBatch};
 pub use db::{NodeRef, SyncBatch, SyncBatchResult};
 pub use error::BknError;
 pub use reserved::{check_table_name, is_reserved, RESERVED_TABLE_NAMES};
-pub use storage::{KvIter, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+pub use storage::{KvIter, KvPairs, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};

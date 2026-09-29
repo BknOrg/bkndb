@@ -98,7 +98,7 @@ mod tests {
     fn temp_file() -> (tempfile::TempDir, File) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("container.bkndb");
-        let file = std::fs::OpenOptions::new().create(true).read(true).write(true).open(&path).unwrap();
+        let file = std::fs::OpenOptions::new().create(true).truncate(true).read(true).write(true).open(&path).unwrap();
         (dir, file)
     }
 

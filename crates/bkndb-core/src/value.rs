@@ -81,6 +81,7 @@ impl PropValue {
 /// Encodings of different kinds can coincide (an `Int` and a `Timestamp`
 /// with the same number), so a key is only meaningful together with its
 /// kind — which a relational column fixes.
+#[cfg_attr(not(any(feature = "graph", feature = "relational")), allow(dead_code))]
 pub(crate) fn sortable_key(value: &PropValue) -> Option<Vec<u8>> {
     match value {
         PropValue::Int(i) | PropValue::Timestamp(i) => Some(((*i as u64) ^ 0x8000_0000_0000_0000).to_be_bytes().to_vec()),
@@ -97,6 +98,7 @@ pub(crate) fn sortable_key(value: &PropValue) -> Option<Vec<u8>> {
 
 /// Ordering between two non-null values, or `None` if their kinds aren't
 /// comparable. `Int`/`Float` compare numerically across kinds.
+#[cfg_attr(not(any(feature = "graph", feature = "relational")), allow(dead_code))]
 pub(crate) fn compare_values(a: &PropValue, b: &PropValue) -> Option<Ordering> {
     use PropValue::*;
     match (a, b) {
@@ -129,6 +131,7 @@ pub(crate) fn compare_values(a: &PropValue, b: &PropValue) -> Option<Ordering> {
 
 /// A total order over optional values for ORDER BY and grouping: nulls
 /// (and missing values) first, then by kind, then by value.
+#[cfg_attr(not(any(feature = "graph", feature = "relational")), allow(dead_code))]
 pub(crate) fn total_cmp(a: Option<&PropValue>, b: Option<&PropValue>) -> Ordering {
     fn rank(v: Option<&PropValue>) -> u8 {
         match v {
@@ -153,6 +156,7 @@ pub(crate) fn total_cmp(a: Option<&PropValue>, b: Option<&PropValue>) -> Orderin
 }
 
 /// SQL `LIKE` matching over characters (`%` = any run, `_` = one).
+#[cfg_attr(not(any(feature = "graph", feature = "relational")), allow(dead_code))]
 pub(crate) fn like_matches(text: &str, pattern: &str, case_insensitive: bool) -> bool {
     let fold = |s: &str| -> Vec<char> {
         if case_insensitive {

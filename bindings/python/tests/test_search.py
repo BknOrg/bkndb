@@ -81,6 +81,45 @@ def test_vector_search(db: bkndb.Database) -> None:
         db.search_vector("articles", "emb", [1.0, 0.0])  # wrong dimension
 
 
+def test_vector_index(db: bkndb.Database) -> None:
+    import random
+
+    rng = random.Random(7)
+    db.create_table(TableSchema("v", [Column("id", int), Column("grp", str), Column("emb", bytes)], primary_key="id"))
+    vectors = {i: [rng.uniform(-1, 1) for _ in range(8)] for i in range(1, 401)}
+    db.insert_many("v", [{"id": i, "grp": "ab"[i % 2], "emb": bkndb.pack_vector(v)} for i, v in vectors.items()])
+
+    assert db.create_vector_index("v", "emb", m=8, ef_construction=64) is True
+    assert db.create_vector_index("v", "emb") is False
+    (info,) = db.vector_indexes("v")
+    assert (info.column, info.metric, info.m, info.ef_construction, info.dimensions, info.vectors) == ("emb", "cosine", 8, 64, 8, 400)
+
+    q = [rng.uniform(-1, 1) for _ in range(8)]
+    approx = db.search_vector("v", "emb", q, limit=10)
+    exact = db.search_vector("v", "emb", q, limit=10, exact=True)
+    assert len(set(pks(approx)) & set(pks(exact))) >= 9
+    assert pks(db.search_vector("v", "emb", vectors[123], limit=1, ef_search=128)) == [123]
+    assert all(h.row.values["grp"] == "a" for h in db.search_vector("v", "emb", q, where={"grp": "a"}))
+
+    # Maintained by writes, rolled back with transactions.
+    db.delete_rows("v", {"id": 123})
+    assert 123 not in pks(db.search_vector("v", "emb", vectors[123], limit=5))
+    with pytest.raises(RuntimeError):
+        with db.transaction() as tx:
+            tx.insert("v", {"id": 999, "grp": "a", "emb": bkndb.pack_vector(q)})
+            raise RuntimeError("roll back")
+    assert db.vector_indexes("v")[0].vectors == 399
+
+    with pytest.raises(bkndb.QueryError):
+        db.insert("v", {"id": 1000, "emb": bkndb.pack_vector([1.0, 2.0])})  # wrong dimension
+    with pytest.raises(bkndb.SchemaMismatchError):
+        db.create_vector_index("v", "grp")
+    with pytest.raises(ValueError):
+        db.create_vector_index("v", "emb", metric="manhattan")
+    assert db.drop_vector_index("v", "emb") is True
+    assert db.vector_indexes("v") == []
+
+
 def test_pack_vector() -> None:
     packed = bkndb.pack_vector([1.0, -2.5])
     assert packed == b"\x00\x00\x80\x3f\x00\x00\x20\xc0"

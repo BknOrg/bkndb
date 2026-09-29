@@ -13,7 +13,7 @@ pub use txn::{BatchKv, ReadKv};
 use std::ops::Bound;
 use std::sync::Arc;
 
-use crate::{check_table_name, BknError, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+use crate::{check_table_name, BknError, KvPairs, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 
 pub struct Kv<B: StorageBackend> {
     backend: Arc<B>,
@@ -38,7 +38,7 @@ impl<B: StorageBackend> Kv<B> {
         table: TableSpec,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    ) -> Result<KvPairs, BknError> {
         check_table_name(table.0)?;
         self.backend.begin_read()?.range(table, start, end)
     }

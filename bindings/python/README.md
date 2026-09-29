@@ -125,12 +125,13 @@ Yang didukung:
 
 **Full-text search** — `db.create_fulltext_index(table, column)` membuat index BM25 pada kolom teks, dan index itu terus diperbarui oleh setiap insert, update, dan delete. Cari dengan `db.search_text(table, column, "kata lain*", limit=10, match_all=False, where=None)`, yang mengembalikan list `ScoredRow(row, score)`. Tokenisasinya per kata (huruf/angka Unicode, tanpa stemming), jadi netral bahasa. `kata*` berarti pencarian prefix.
 
-**Vector search** — `db.search_vector(table, column, vector, limit=10, metric="cosine"|"dot"|"euclidean", where=None)` melakukan k-NN eksak. Embedding bisa disimpan sebagai `list` angka, atau sebagai `bytes` dari `bkndb.pack_vector(vec)` (float32, 3× lebih hemat). Pencariannya scan linear, cocok sampai ratusan ribu baris, dan belum memakai index ANN.
+**Vector search** — `db.search_vector(table, column, vector, limit=10, metric="cosine"|"dot"|"euclidean", where=None)` melakukan k-NN. Embedding bisa disimpan sebagai `list` angka, atau sebagai `bytes` dari `bkndb.pack_vector(vec)` (float32, 3× lebih hemat). Tanpa index, pencariannya berupa scan linear yang eksak, cocok sampai ratusan ribu baris. `db.create_vector_index(table, column, metric="cosine", m=16, ef_construction=200)` membangun index HNSW (approximate nearest neighbour), dan setelah itu `search_vector` dengan metrik yang sama memakai index itu. Pada 100 ribu vektor 128 dimensi, query turun dari ~117 ms ke ~5 ms dengan recall@10 ≈ 0,98. `ef_search=` menaikkan recall, dan `exact=True` memaksa scan.
 
 ```python
 db.create_fulltext_index("articles", "body")
 hits = db.search_text("articles", "body", "graph datab*", where=col("lang") == "id")
 db.insert("articles", {"title": "…", "emb": bkndb.pack_vector(model.encode("…"))})
+db.create_vector_index("articles", "emb")          # opsional: HNSW untuk tabel besar
 nearest = db.search_vector("articles", "emb", model.encode("query"), limit=5)
 ```
 
@@ -174,10 +175,17 @@ bindings/python/
 ├── pyproject.toml     # metadata + konfigurasi maturin (bindings = "uniffi")
 ├── bkndb/             # API publik — hanya dari sini yang boleh di-import
 │   ├── __init__.py
-│   ├── database.py    # Database, Transaction, Table
+│   ├── database.py    # Database (gabungan mixin _ops_*), re-export Transaction, Table
 │   ├── query.py       # col(), ekspresi filter, Agg
-│   ├── types.py       # Node/Edge/Row/TableSchema/... + konversi nilai
+│   ├── types.py       # fasad publik: Node/Edge/Row/TableSchema/... + konversi nilai
 │   ├── errors.py      # hierarki exception
+│   ├── _common.py     # helper internal (pemetaan error, parameter, metric)
+│   ├── _ops_core.py   # operasi bersama Database/Transaction, kelas Table & Transaction
+│   ├── _ops_search.py # full-text & vector search, index vektor
+│   ├── _ops_io.py     # transaksi, backup/stats/verify, import/export
+│   ├── _ops_extra.py  # query graph, helper tabel, sync_batch, pandas/NetworkX
+│   ├── _values.py / _records.py / _tables.py   # implementasi di balik types.py
+│   ├── _io.py         # pembaca/penulis CSV & JSONL
 │   └── _native/       # PRIVAT, hasil generate maturin — jangan di-import/commit
 ├── tests/
 └── examples/

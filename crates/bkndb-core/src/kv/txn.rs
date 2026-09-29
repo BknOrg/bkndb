@@ -5,7 +5,7 @@
 
 use std::ops::Bound;
 
-use crate::{check_table_name, BknError, StorageReadTx, StorageWriteTx, TableSpec};
+use crate::{check_table_name, BknError, KvPairs, StorageReadTx, StorageWriteTx, TableSpec};
 
 pub struct ReadKv<'s, R: StorageReadTx> {
     rtx: &'s R,
@@ -26,7 +26,7 @@ impl<'s, R: StorageReadTx> ReadKv<'s, R> {
         table: TableSpec,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    ) -> Result<KvPairs, BknError> {
         check_table_name(table.0)?;
         self.rtx.range(table, start, end)
     }
@@ -51,7 +51,7 @@ impl<'s, W: StorageWriteTx> BatchKv<'s, W> {
         table: TableSpec,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
+    ) -> Result<KvPairs, BknError> {
         check_table_name(table.0)?;
         self.wtx.range(table, start, end)
     }

@@ -10,6 +10,9 @@ pub struct TableSpec(pub &'static str);
 
 /// A lazily-evaluated, ascending stream of `(key, value)` pairs from one
 /// table — see [`StorageReadTx::scan`].
+/// Owned `(key, value)` pairs, as returned by [`StorageReadTx::range`].
+pub type KvPairs = Vec<(Vec<u8>, Vec<u8>)>;
+
 pub type KvIter<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), BknError>> + 'a>;
 
 pub trait StorageBackend: Send + Sync {
@@ -38,7 +41,7 @@ pub trait StorageReadTx {
         table: TableSpec,
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError>;
+    ) -> Result<KvPairs, BknError>;
 
     /// Same rows as [`range`](Self::range), but produced one at a time, so a
     /// caller that stops early (a `LIMIT`) or only folds over the rows (a

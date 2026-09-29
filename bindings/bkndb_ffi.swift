@@ -639,12 +639,6 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol BknDbEngineProtocol: AnyObject, Sendable {
     
     /**
-     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
-     * `group_by`, returns exactly one row.
-     */
-    func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg]) throws  -> [FfiAggregateRow]
-    
-    /**
      * Writes a consistent, compacted copy of everything committed so far to
      * a new file at `dest` (which must not exist), without blocking readers
      * or writers. On-disk databases only.
@@ -659,11 +653,6 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func beginTransaction() throws  -> BknDbTransaction
     
     /**
-     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
-     */
-    func cascadeDelete(root: UInt64, containmentEdge: String) throws  -> [UInt64]
-    
-    /**
      * Closes the database, releasing its file lock. Every later call fails
      * with `DatabaseClosed`. Idempotent; fails while a transaction is open.
      */
@@ -675,7 +664,38 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func compact() throws 
     
-    func count(table: String, query: FfiQuery) throws  -> UInt64
+    /**
+     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+     */
+    func graphQuery(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
+    
+    func isClosed()  -> Bool
+    
+    /**
+     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+     * a `SELECT` against a snapshot, anything else in its own atomic write
+     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+     * `named`.
+     */
+    func sql(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
+    
+    /**
+     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
+     * storage figures for on-disk databases.
+     */
+    func stats() throws  -> FfiDbStats
+    
+    /**
+     * Re-reads and checksums every stored byte, failing with `Corruption`
+     * on the first damaged structure.
+     */
+    func verifyIntegrity() throws  -> FfiIntegrityReport
+    
+    /**
+     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
+     */
+    func cascadeDelete(root: UInt64, containmentEdge: String) throws  -> [UInt64]
     
     /**
      * Number of nodes with `label`.
@@ -691,17 +711,6 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      * Creates multiple edges in a single atomic transaction.
      */
     func createEdgesBulk(edges: [FfiEdgeInput]) throws  -> [UInt64]
-    
-    /**
-     * Builds a full-text (BM25) index over a text column, backfilling
-     * existing rows; `false` if it already exists.
-     */
-    func createFulltextIndex(table: String, column: String) throws  -> Bool
-    
-    /**
-     * Adds a (backfilled) secondary index.
-     */
-    func createIndex(table: String, column: String) throws 
     
     /**
      * Creates a single graph node with the given label and properties.
@@ -720,12 +729,6 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func createNodesBulk(nodes: [FfiNodeInput]) throws  -> [UInt64]
     
     /**
-     * Registers a table. Returns `false` if an identical definition already
-     * exists; fails if a different one does (use `ensure_table` to migrate).
-     */
-    func createTable(schema: FfiTableSchema) throws  -> Bool
-    
-    /**
      * Number of edges at `node` in `direction` (optionally of one type).
      */
     func degree(node: UInt64, direction: FfiDirection, edgeType: String?) throws  -> UInt64
@@ -740,27 +743,7 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func deleteNode(id: UInt64) throws 
     
-    /**
-     * Deletes every row matching `query`; returns how many were removed.
-     */
-    func deleteRows(table: String, query: FfiQuery) throws  -> UInt64
-    
-    func dropFulltextIndex(table: String, column: String) throws  -> Bool
-    
-    func dropIndex(table: String, column: String) throws 
-    
     func dropNodeIndex(label: String, property: String) throws  -> Bool
-    
-    /**
-     * Deletes a table and all its rows; returns whether it existed.
-     */
-    func dropTable(name: String) throws  -> Bool
-    
-    /**
-     * Creates the table, or migrates the existing one to `schema` (columns,
-     * constraints and indexes; existing rows are backfilled/validated).
-     */
-    func ensureTable(schema: FfiTableSchema) throws 
     
     /**
      * Ids of nodes with `label` whose `property` equals `value`, ascending.
@@ -791,29 +774,7 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func getNode(id: UInt64) throws  -> FfiNodeRecord?
     
-    func getRow(table: String, pk: FfiPropValue) throws  -> FfiRow?
-    
-    /**
-     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
-     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
-     */
-    func graphQuery(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
-    
-    /**
-     * Inserts a row; returns its primary key (generated for auto-increment
-     * tables). Fails with `DuplicateKey` if the key is taken.
-     */
-    func insert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
-    
-    func insertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
-    
-    func isClosed()  -> Bool
-    
-    func listFulltextIndexes(table: String) throws  -> [String]
-    
     func listNodeIndexes() throws  -> [FfiPropertyIndex]
-    
-    func listTables() throws  -> [FfiTableSchema]
     
     /**
      * Neighbors of `node` in `direction`, over every edge type unless
@@ -843,40 +804,10 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func rebuildGraphIndexes() throws 
     
     /**
-     * Up to `limit` rows whose `column` best matches `query` (BM25).
-     * `word*` is a prefix match; `match_all` requires every word.
-     */
-    func searchText(table: String, column: String, query: String, limit: UInt32, matchAll: Bool, filter: [FfiExprNode]) throws  -> [FfiScoredRow]
-    
-    /**
-     * The `limit` rows whose embedding in `column` (a list of numbers, or
-     * bytes of little-endian f32s) is nearest to `vector`.
-     */
-    func searchVector(table: String, column: String, vector: [Float], limit: UInt32, metric: FfiVectorMetric, filter: [FfiExprNode]) throws  -> [FfiScoredRow]
-    
-    func select(table: String, query: FfiQuery) throws  -> [FfiRow]
-    
-    /**
-     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
-     * a `SELECT` against a snapshot, anything else in its own atomic write
-     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
-     * `named`.
-     */
-    func sql(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
-    
-    /**
-     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
-     * storage figures for on-disk databases.
-     */
-    func stats() throws  -> FfiDbStats
-    
-    /**
      * Ingests graph nodes, edges and relational rows (upserted by primary
      * key) in a single atomic transaction.
      */
     func syncBatch(batch: FfiSyncBatch) throws  -> FfiSyncResult
-    
-    func tableSchema(name: String) throws  -> FfiTableSchema?
     
     /**
      * Finds the top `k` hub nodes by degree centrality, optionally filtered by node label.
@@ -902,6 +833,59 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func updateNodeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String]) throws 
     
     /**
+     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
+     * `group_by`, returns exactly one row.
+     */
+    func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg]) throws  -> [FfiAggregateRow]
+    
+    func count(table: String, query: FfiQuery) throws  -> UInt64
+    
+    /**
+     * Adds a (backfilled) secondary index.
+     */
+    func createIndex(table: String, column: String) throws 
+    
+    /**
+     * Registers a table. Returns `false` if an identical definition already
+     * exists; fails if a different one does (use `ensure_table` to migrate).
+     */
+    func createTable(schema: FfiTableSchema) throws  -> Bool
+    
+    /**
+     * Deletes every row matching `query`; returns how many were removed.
+     */
+    func deleteRows(table: String, query: FfiQuery) throws  -> UInt64
+    
+    func dropIndex(table: String, column: String) throws 
+    
+    /**
+     * Deletes a table and all its rows; returns whether it existed.
+     */
+    func dropTable(name: String) throws  -> Bool
+    
+    /**
+     * Creates the table, or migrates the existing one to `schema` (columns,
+     * constraints and indexes; existing rows are backfilled/validated).
+     */
+    func ensureTable(schema: FfiTableSchema) throws 
+    
+    func getRow(table: String, pk: FfiPropValue) throws  -> FfiRow?
+    
+    /**
+     * Inserts a row; returns its primary key (generated for auto-increment
+     * tables). Fails with `DuplicateKey` if the key is taken.
+     */
+    func insert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
+    
+    func insertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
+    
+    func listTables() throws  -> [FfiTableSchema]
+    
+    func select(table: String, query: FfiQuery) throws  -> [FfiRow]
+    
+    func tableSchema(name: String) throws  -> FfiTableSchema?
+    
+    /**
      * Sets the columns in `set` on every row matching `query`; returns how
      * many rows changed.
      */
@@ -915,10 +899,39 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func upsertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
     
     /**
-     * Re-reads and checksums every stored byte, failing with `Corruption`
-     * on the first damaged structure.
+     * Builds a full-text (BM25) index over a text column, backfilling
+     * existing rows; `false` if it already exists.
      */
-    func verifyIntegrity() throws  -> FfiIntegrityReport
+    func createFulltextIndex(table: String, column: String) throws  -> Bool
+    
+    /**
+     * Builds an approximate (HNSW) vector index over a list/bytes embedding
+     * column for `metric`, backfilling existing rows; `false` if the column
+     * already has one.
+     */
+    func createVectorIndex(table: String, column: String, metric: FfiVectorMetric, m: UInt32, efConstruction: UInt32) throws  -> Bool
+    
+    func dropFulltextIndex(table: String, column: String) throws  -> Bool
+    
+    func dropVectorIndex(table: String, column: String) throws  -> Bool
+    
+    func listFulltextIndexes(table: String) throws  -> [String]
+    
+    func listVectorIndexes(table: String) throws  -> [FfiVectorIndexInfo]
+    
+    /**
+     * Up to `limit` rows whose `column` best matches `query` (BM25).
+     * `word*` is a prefix match; `match_all` requires every word.
+     */
+    func searchText(table: String, column: String, query: String, limit: UInt32, matchAll: Bool, filter: [FfiExprNode]) throws  -> [FfiScoredRow]
+    
+    /**
+     * The `limit` rows whose embedding in `column` (a list of numbers, or
+     * bytes of little-endian f32s) is nearest to `vector`. Uses the column's
+     * vector index when it has one for `metric` (approximate; `ef_search`
+     * trades speed for recall), unless `exact` forces a full scan.
+     */
+    func searchVector(table: String, column: String, vector: [Float], limit: UInt32, metric: FfiVectorMetric, filter: [FfiExprNode], exact: Bool, efSearch: UInt32?) throws  -> [FfiScoredRow]
     
 }
 /**
@@ -1015,23 +1028,6 @@ public static func openWithOptions(path: String, options: FfiLsmOptions)throws  
 
     
     /**
-     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
-     * `group_by`, returns exactly one row.
-     */
-open func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg])throws  -> [FfiAggregateRow]  {
-    return try  FfiConverterSequenceTypeFfiAggregateRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterTypeFfiQuery_lower(query),
-        FfiConverterSequenceString.lower(groupBy),
-        FfiConverterSequenceTypeFfiAgg.lower(aggregates),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * Writes a consistent, compacted copy of everything committed so far to
      * a new file at `dest` (which must not exist), without blocking readers
      * or writers. On-disk databases only.
@@ -1060,20 +1056,6 @@ open func beginTransaction()throws  -> BknDbTransaction  {
 }
     
     /**
-     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
-     */
-open func cascadeDelete(root: UInt64, containmentEdge: String)throws  -> [UInt64]  {
-    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_cascade_delete(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt64.lower(root),
-        FfiConverterString.lower(containmentEdge),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * Closes the database, releasing its file lock. Every later call fails
      * with `DatabaseClosed`. Idempotent; fails while a transaction is open.
      */
@@ -1097,13 +1079,85 @@ open func compact()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_l
 }
 }
     
-open func count(table: String, query: FfiQuery)throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+    /**
+     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+     */
+open func graphQuery(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
+    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_count(
+    uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+        FfiConverterString.lower(query),
+        FfiConverterSequenceTypeFfiPropValue.lower(positional),
+        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
+    )
+})
+}
+    
+open func isClosed() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+     * a `SELECT` against a snapshot, anything else in its own atomic write
+     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+     * `named`.
+     */
+open func sql(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
+    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_sql(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterSequenceTypeFfiPropValue.lower(positional),
+        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
+     * storage figures for on-disk databases.
+     */
+open func stats()throws  -> FfiDbStats  {
+    return try  FfiConverterTypeFfiDbStats_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_stats(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Re-reads and checksums every stored byte, failing with `Corruption`
+     * on the first damaged structure.
+     */
+open func verifyIntegrity()throws  -> FfiIntegrityReport  {
+    return try  FfiConverterTypeFfiIntegrityReport_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
+     */
+open func cascadeDelete(root: UInt64, containmentEdge: String)throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_cascade_delete(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(root),
+        FfiConverterString.lower(containmentEdge),uniffiCallStatus
     )
 })
 }
@@ -1151,34 +1205,6 @@ open func createEdgesBulk(edges: [FfiEdgeInput])throws  -> [UInt64]  {
 }
     
     /**
-     * Builds a full-text (BM25) index over a text column, backfilling
-     * existing rows; `false` if it already exists.
-     */
-open func createFulltextIndex(table: String, column: String)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterString.lower(column),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Adds a (backfilled) secondary index.
-     */
-open func createIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterString.lower(column),uniffiCallStatus
-    )
-}
-}
-    
-    /**
      * Creates a single graph node with the given label and properties.
      */
 open func createNode(label: String, properties: [String: FfiPropValue])throws  -> UInt64  {
@@ -1216,20 +1242,6 @@ open func createNodesBulk(nodes: [FfiNodeInput])throws  -> [UInt64]  {
     uniffi_bkndb_ffi_fn_method_bkndbengine_create_nodes_bulk(
             self.uniffiCloneHandle(),
         FfiConverterSequenceTypeFfiNodeInput.lower(nodes),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Registers a table. Returns `false` if an identical definition already
-     * exists; fails if a different one does (use `ensure_table` to migrate).
-     */
-open func createTable(schema: FfiTableSchema)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
     )
 })
 }
@@ -1274,41 +1286,6 @@ open func deleteNode(id: UInt64)throws   {try rustCallWithError(FfiConverterType
 }
 }
     
-    /**
-     * Deletes every row matching `query`; returns how many were removed.
-     */
-open func deleteRows(table: String, query: FfiQuery)throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
-    )
-})
-}
-    
-open func dropFulltextIndex(table: String, column: String)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterString.lower(column),uniffiCallStatus
-    )
-})
-}
-    
-open func dropIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterString.lower(column),uniffiCallStatus
-    )
-}
-}
-    
 open func dropNodeIndex(label: String, property: String)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
@@ -1318,32 +1295,6 @@ open func dropNodeIndex(label: String, property: String)throws  -> Bool  {
         FfiConverterString.lower(property),uniffiCallStatus
     )
 })
-}
-    
-    /**
-     * Deletes a table and all its rows; returns whether it existed.
-     */
-open func dropTable(name: String)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(name),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Creates the table, or migrates the existing one to `schema` (columns,
-     * constraints and indexes; existing rows are backfilled/validated).
-     */
-open func ensureTable(schema: FfiTableSchema)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
-    )
-}
 }
     
     /**
@@ -1425,91 +1376,10 @@ open func getNode(id: UInt64)throws  -> FfiNodeRecord?  {
 })
 }
     
-open func getRow(table: String, pk: FfiPropValue)throws  -> FfiRow?  {
-    return try  FfiConverterOptionTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterTypeFfiPropValue_lower(pk),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
-     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
-     */
-open func graphQuery(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
-    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(query),
-        FfiConverterSequenceTypeFfiPropValue.lower(positional),
-        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Inserts a row; returns its primary key (generated for auto-increment
-     * tables). Fails with `DuplicateKey` if the key is taken.
-     */
-open func insert(table: String, values: [String: FfiPropValue])throws  -> FfiPropValue  {
-    return try  FfiConverterTypeFfiPropValue_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_insert(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterDictionaryStringTypeFfiPropValue.lower(values),uniffiCallStatus
-    )
-})
-}
-    
-open func insertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [FfiPropValue]  {
-    return try  FfiConverterSequenceTypeFfiPropValue.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterSequenceDictionaryStringTypeFfiPropValue.lower(rows),uniffiCallStatus
-    )
-})
-}
-    
-open func isClosed() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-open func listFulltextIndexes(table: String)throws  -> [String]  {
-    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),uniffiCallStatus
-    )
-})
-}
-    
 open func listNodeIndexes()throws  -> [FfiPropertyIndex]  {
     return try  FfiConverterSequenceTypeFfiPropertyIndex.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
     uniffi_bkndb_ffi_fn_method_bkndbengine_list_node_indexes(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-open func listTables()throws  -> [FfiTableSchema]  {
-    return try  FfiConverterSequenceTypeFfiTableSchema.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -1585,86 +1455,6 @@ open func rebuildGraphIndexes()throws   {try rustCallWithError(FfiConverterTypeF
 }
     
     /**
-     * Up to `limit` rows whose `column` best matches `query` (BM25).
-     * `word*` is a prefix match; `match_all` requires every word.
-     */
-open func searchText(table: String, column: String, query: String, limit: UInt32, matchAll: Bool = false, filter: [FfiExprNode] = [])throws  -> [FfiScoredRow]  {
-    return try  FfiConverterSequenceTypeFfiScoredRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterString.lower(column),
-        FfiConverterString.lower(query),
-        FfiConverterUInt32.lower(limit),
-        FfiConverterBool.lower(matchAll),
-        FfiConverterSequenceTypeFfiExprNode.lower(filter),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * The `limit` rows whose embedding in `column` (a list of numbers, or
-     * bytes of little-endian f32s) is nearest to `vector`.
-     */
-open func searchVector(table: String, column: String, vector: [Float], limit: UInt32, metric: FfiVectorMetric, filter: [FfiExprNode] = [])throws  -> [FfiScoredRow]  {
-    return try  FfiConverterSequenceTypeFfiScoredRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterString.lower(column),
-        FfiConverterSequenceFloat.lower(vector),
-        FfiConverterUInt32.lower(limit),
-        FfiConverterTypeFfiVectorMetric_lower(metric),
-        FfiConverterSequenceTypeFfiExprNode.lower(filter),uniffiCallStatus
-    )
-})
-}
-    
-open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
-    return try  FfiConverterSequenceTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_select(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(table),
-        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
-     * a `SELECT` against a snapshot, anything else in its own atomic write
-     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
-     * `named`.
-     */
-open func sql(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
-    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_sql(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(query),
-        FfiConverterSequenceTypeFfiPropValue.lower(positional),
-        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
-     * storage figures for on-disk databases.
-     */
-open func stats()throws  -> FfiDbStats  {
-    return try  FfiConverterTypeFfiDbStats_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_stats(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * Ingests graph nodes, edges and relational rows (upserted by primary
      * key) in a single atomic transaction.
      */
@@ -1674,16 +1464,6 @@ open func syncBatch(batch: FfiSyncBatch)throws  -> FfiSyncResult  {
     uniffi_bkndb_ffi_fn_method_bkndbengine_sync_batch(
             self.uniffiCloneHandle(),
         FfiConverterTypeFfiSyncBatch_lower(batch),uniffiCallStatus
-    )
-})
-}
-    
-open func tableSchema(name: String)throws  -> FfiTableSchema?  {
-    return try  FfiConverterOptionTypeFfiTableSchema.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
-        uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(name),uniffiCallStatus
     )
 })
 }
@@ -1752,6 +1532,178 @@ open func updateNodeProperties(id: UInt64, set: [String: FfiPropValue], unset: [
 }
     
     /**
+     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
+     * `group_by`, returns exactly one row.
+     */
+open func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg])throws  -> [FfiAggregateRow]  {
+    return try  FfiConverterSequenceTypeFfiAggregateRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),
+        FfiConverterSequenceString.lower(groupBy),
+        FfiConverterSequenceTypeFfiAgg.lower(aggregates),uniffiCallStatus
+    )
+})
+}
+    
+open func count(table: String, query: FfiQuery)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_count(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Adds a (backfilled) secondary index.
+     */
+open func createIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Registers a table. Returns `false` if an identical definition already
+     * exists; fails if a different one does (use `ensure_table` to migrate).
+     */
+open func createTable(schema: FfiTableSchema)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Deletes every row matching `query`; returns how many were removed.
+     */
+open func deleteRows(table: String, query: FfiQuery)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+open func dropIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Deletes a table and all its rows; returns whether it existed.
+     */
+open func dropTable(name: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Creates the table, or migrates the existing one to `schema` (columns,
+     * constraints and indexes; existing rows are backfilled/validated).
+     */
+open func ensureTable(schema: FfiTableSchema)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
+    )
+}
+}
+    
+open func getRow(table: String, pk: FfiPropValue)throws  -> FfiRow?  {
+    return try  FfiConverterOptionTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiPropValue_lower(pk),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Inserts a row; returns its primary key (generated for auto-increment
+     * tables). Fails with `DuplicateKey` if the key is taken.
+     */
+open func insert(table: String, values: [String: FfiPropValue])throws  -> FfiPropValue  {
+    return try  FfiConverterTypeFfiPropValue_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_insert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(values),uniffiCallStatus
+    )
+})
+}
+    
+open func insertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [FfiPropValue]  {
+    return try  FfiConverterSequenceTypeFfiPropValue.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterSequenceDictionaryStringTypeFfiPropValue.lower(rows),uniffiCallStatus
+    )
+})
+}
+    
+open func listTables()throws  -> [FfiTableSchema]  {
+    return try  FfiConverterSequenceTypeFfiTableSchema.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
+    return try  FfiConverterSequenceTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_select(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+open func tableSchema(name: String)throws  -> FfiTableSchema?  {
+    return try  FfiConverterOptionTypeFfiTableSchema.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Sets the columns in `set` on every row matching `query`; returns how
      * many rows changed.
      */
@@ -1793,14 +1745,119 @@ open func upsertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [F
 }
     
     /**
-     * Re-reads and checksums every stored byte, failing with `Corruption`
-     * on the first damaged structure.
+     * Builds a full-text (BM25) index over a text column, backfilling
+     * existing rows; `false` if it already exists.
      */
-open func verifyIntegrity()throws  -> FfiIntegrityReport  {
-    return try  FfiConverterTypeFfiIntegrityReport_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+open func createFulltextIndex(table: String, column: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
-    uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(
-            self.uniffiCloneHandle(),uniffiCallStatus
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Builds an approximate (HNSW) vector index over a list/bytes embedding
+     * column for `metric`, backfilling existing rows; `false` if the column
+     * already has one.
+     */
+open func createVectorIndex(table: String, column: String, metric: FfiVectorMetric, m: UInt32 = UInt32(16), efConstruction: UInt32 = UInt32(200))throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_vector_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),
+        FfiConverterTypeFfiVectorMetric_lower(metric),
+        FfiConverterUInt32.lower(m),
+        FfiConverterUInt32.lower(efConstruction),uniffiCallStatus
+    )
+})
+}
+    
+open func dropFulltextIndex(table: String, column: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+})
+}
+    
+open func dropVectorIndex(table: String, column: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_vector_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+})
+}
+    
+open func listFulltextIndexes(table: String)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),uniffiCallStatus
+    )
+})
+}
+    
+open func listVectorIndexes(table: String)throws  -> [FfiVectorIndexInfo]  {
+    return try  FfiConverterSequenceTypeFfiVectorIndexInfo.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_list_vector_indexes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Up to `limit` rows whose `column` best matches `query` (BM25).
+     * `word*` is a prefix match; `match_all` requires every word.
+     */
+open func searchText(table: String, column: String, query: String, limit: UInt32, matchAll: Bool = false, filter: [FfiExprNode] = [])throws  -> [FfiScoredRow]  {
+    return try  FfiConverterSequenceTypeFfiScoredRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterBool.lower(matchAll),
+        FfiConverterSequenceTypeFfiExprNode.lower(filter),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The `limit` rows whose embedding in `column` (a list of numbers, or
+     * bytes of little-endian f32s) is nearest to `vector`. Uses the column's
+     * vector index when it has one for `metric` (approximate; `ef_search`
+     * trades speed for recall), unless `exact` forces a full scan.
+     */
+open func searchVector(table: String, column: String, vector: [Float], limit: UInt32, metric: FfiVectorMetric, filter: [FfiExprNode] = [], exact: Bool = false, efSearch: UInt32? = nil)throws  -> [FfiScoredRow]  {
+    return try  FfiConverterSequenceTypeFfiScoredRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),
+        FfiConverterSequenceFloat.lower(vector),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterTypeFfiVectorMetric_lower(metric),
+        FfiConverterSequenceTypeFfiExprNode.lower(filter),
+        FfiConverterBool.lower(exact),
+        FfiConverterOptionUInt32.lower(efSearch),uniffiCallStatus
     )
 })
 }
@@ -4286,6 +4343,85 @@ public func FfiConverterTypeFfiTypedNeighbor_lower(_ value: FfiTypedNeighbor) ->
 
 
 /**
+ * An approximate (HNSW) vector index over one column.
+ */
+public struct FfiVectorIndexInfo: Equatable, Hashable {
+    public var column: String
+    public var metric: FfiVectorMetric
+    public var m: UInt32
+    public var efConstruction: UInt32
+    /**
+     * `None` while the index is empty.
+     */
+    public var dimensions: UInt32?
+    public var vectors: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(column: String, metric: FfiVectorMetric, m: UInt32, efConstruction: UInt32, 
+        /**
+         * `None` while the index is empty.
+         */dimensions: UInt32?, vectors: UInt64) {
+        self.column = column
+        self.metric = metric
+        self.m = m
+        self.efConstruction = efConstruction
+        self.dimensions = dimensions
+        self.vectors = vectors
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiVectorIndexInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiVectorIndexInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiVectorIndexInfo {
+        return
+            try FfiVectorIndexInfo(
+                column: FfiConverterString.read(from: &buf), 
+                metric: FfiConverterTypeFfiVectorMetric.read(from: &buf), 
+                m: FfiConverterUInt32.read(from: &buf), 
+                efConstruction: FfiConverterUInt32.read(from: &buf), 
+                dimensions: FfiConverterOptionUInt32.read(from: &buf), 
+                vectors: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiVectorIndexInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.column, into: &buf)
+        FfiConverterTypeFfiVectorMetric.write(value.metric, into: &buf)
+        FfiConverterUInt32.write(value.m, into: &buf)
+        FfiConverterUInt32.write(value.efConstruction, into: &buf)
+        FfiConverterOptionUInt32.write(value.dimensions, into: &buf)
+        FfiConverterUInt64.write(value.vectors, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiVectorIndexInfo_lift(_ buf: RustBuffer) throws -> FfiVectorIndexInfo {
+    return try FfiConverterTypeFfiVectorIndexInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiVectorIndexInfo_lower(_ value: FfiVectorIndexInfo) -> RustBuffer {
+    return FfiConverterTypeFfiVectorIndexInfo.lower(value)
+}
+
+
+/**
  * A lowest-cost path and its total cost.
  */
 public struct FfiWeightedPath: Equatable, Hashable {
@@ -6261,6 +6397,31 @@ fileprivate struct FfiConverterSequenceTypeFfiTypedNeighbor: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiVectorIndexInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiVectorIndexInfo]
+
+    public static func write(_ value: [FfiVectorIndexInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiVectorIndexInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiVectorIndexInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiVectorIndexInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiVectorIndexInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiPropValue: FfiConverterRustBuffer {
     typealias SwiftType = [FfiPropValue]
 
@@ -6374,16 +6535,10 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate() != 17739) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_backup() != 17731) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_begin_transaction() != 20627) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete() != 35560) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_close() != 59774) {
@@ -6392,124 +6547,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_compact() != 19869) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count() != 538) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes() != 28333) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge() != 19597) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk() != 46431) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index() != 48110) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index() != 42108) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node() != 55339) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index() != 17156) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk() != 29999) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table() != 63913) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_degree() != 42609) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_edge() != 45594) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_node() != 3983) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows() != 33801) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index() != 11715) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index() != 15048) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index() != 6273) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table() != 2085) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table() != 27575) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes() != 27470) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path() != 36954) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_weighted_path() != 8679) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_edge() != 45481) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_node() != 2294) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row() != 9466) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_graph_query() != 59322) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert() != 23042) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many() != 9293) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed() != 53864) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes() != 57865) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes() != 6192) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables() != 21732) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors() != 58866) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_in() != 30079) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out() != 62954) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_nodes_by_label() != 32913) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes() != 31135) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text() != 2275) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector() != 4355) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_select() != 42895) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sql() != 22552) {
@@ -6518,34 +6559,163 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_stats() != 27697) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() != 11272) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema() != 26297) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs() != 47001) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_traverse() != 23940) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_edge_properties() != 43792) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_node_properties() != 35215) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_rows() != 63732) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert() != 23307) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many() != 7825) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_verify_integrity() != 18796) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete() != 62417) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes() != 32168) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge() != 65203) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk() != 20448) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node() != 549) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index() != 45894) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk() != 25652) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_degree() != 8745) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_edge() != 44180) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_node() != 33412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index() != 19003) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes() != 37009) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path() != 13952) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_weighted_path() != 12824) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_edge() != 56760) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_node() != 29664) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes() != 22714) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors() != 49578) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_in() != 31702) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out() != 47756) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_nodes_by_label() != 64775) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes() != 22344) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() != 18892) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs() != 25978) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_traverse() != 62505) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_edge_properties() != 46926) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_node_properties() != 44611) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate() != 47230) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count() != 53047) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index() != 19937) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table() != 61281) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows() != 6663) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index() != 17412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table() != 11423) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table() != 32363) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row() != 22620) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert() != 63941) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many() != 52456) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables() != 56399) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_select() != 57225) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema() != 13909) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_rows() != 58361) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert() != 18217) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many() != 47946) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index() != 3697) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_vector_index() != 36998) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index() != 17313) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_vector_index() != 44571) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes() != 64569) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_vector_indexes() != 5594) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text() != 30247) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector() != 59450) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_commit() != 11719) {

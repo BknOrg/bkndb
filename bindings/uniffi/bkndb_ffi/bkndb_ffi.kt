@@ -675,19 +675,25 @@ internal object IntegrityCheckingUniffiLib {
     }
 
     internal fun ensureInitialized() = Unit
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate(
-    ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_backup(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_begin_transaction(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_close(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_compact(
     ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_count(
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_graph_query(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_sql(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_stats(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_verify_integrity(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes(
     ): Int
@@ -695,17 +701,11 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk(
     ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index(
-    ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_degree(
     ): Int
@@ -713,17 +713,7 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_node(
     ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index(
-    ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes(
     ): Int
@@ -735,21 +725,7 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_get_node(
     ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_graph_query(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_insert(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes(
-    ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors(
     ): Int
@@ -761,19 +737,7 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes(
     ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_select(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_sql(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_stats(
-    ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch(
-    ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs(
     ): Int
@@ -783,13 +747,55 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_update_node_properties(
     ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_count(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_insert(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_select(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema(
+    ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_update_rows(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many(
     ): Int
-    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_verify_integrity(
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_create_vector_index(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_vector_index(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_list_vector_indexes(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text(
+    ): Int
+    external fun uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector(
     ): Int
     external fun uniffi_bkndb_ffi_checksum_method_bkndbtransaction_commit(
     ): Int
@@ -887,56 +893,46 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_bkndb_ffi_fn_constructor_bkndbengine_open_with_options(`path`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`groupBy`: RustBuffer.ByValue,`aggregates`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_backup(`ptr`: Long,`dest`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_begin_transaction(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_cascade_delete(`ptr`: Long,`root`: Long,`containmentEdge`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_close(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_compact(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_count(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(`ptr`: Long,`query`: RustBuffer.ByValue,`positional`: RustBuffer.ByValue,`named`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_sql(`ptr`: Long,`query`: RustBuffer.ByValue,`positional`: RustBuffer.ByValue,`named`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_stats(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_cascade_delete(`ptr`: Long,`root`: Long,`containmentEdge`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_count_nodes(`ptr`: Long,`label`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_edge(`ptr`: Long,`from`: Long,`edgeType`: RustBuffer.ByValue,`to`: Long,`properties`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_edges_bulk(`ptr`: Long,`edges`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_node(`ptr`: Long,`label`: RustBuffer.ByValue,`properties`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_node_index(`ptr`: Long,`label`: RustBuffer.ByValue,`property`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_nodes_bulk(`ptr`: Long,`nodes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(`ptr`: Long,`schema`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_degree(`ptr`: Long,`node`: Long,`direction`: RustBuffer.ByValue,`edgeType`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_delete_edge(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_delete_node(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_node_index(`ptr`: Long,`label`: RustBuffer.ByValue,`property`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(`ptr`: Long,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(`ptr`: Long,`schema`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_find_nodes(`ptr`: Long,`label`: RustBuffer.ByValue,`property`: RustBuffer.ByValue,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_find_shortest_path(`ptr`: Long,`start`: Long,`target`: Long,`direction`: RustBuffer.ByValue,`edgeTypes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -947,21 +943,7 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_get_node(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(`ptr`: Long,`table`: RustBuffer.ByValue,`pk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(`ptr`: Long,`query`: RustBuffer.ByValue,`positional`: RustBuffer.ByValue,`named`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_insert(`ptr`: Long,`table`: RustBuffer.ByValue,`values`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(`ptr`: Long,`table`: RustBuffer.ByValue,`rows`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(`ptr`: Long,`table`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_list_node_indexes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_neighbors(`ptr`: Long,`node`: Long,`direction`: RustBuffer.ByValue,`edgeType`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -973,19 +955,7 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_rebuild_graph_indexes(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`limit`: Int,`matchAll`: Byte,`filter`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,`vector`: RustBuffer.ByValue,`limit`: Int,`metric`: RustBuffer.ByValue,`filter`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_select(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_sql(`ptr`: Long,`query`: RustBuffer.ByValue,`positional`: RustBuffer.ByValue,`named`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_stats(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_sync_batch(`ptr`: Long,`batch`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(`ptr`: Long,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_top_hubs(`ptr`: Long,`k`: Int,`direction`: RustBuffer.ByValue,`edgeType`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -995,13 +965,55 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_update_node_properties(`ptr`: Long,`id`: Long,`set`: RustBuffer.ByValue,`unset`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`groupBy`: RustBuffer.ByValue,`aggregates`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_count(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(`ptr`: Long,`schema`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(`ptr`: Long,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(`ptr`: Long,`schema`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(`ptr`: Long,`table`: RustBuffer.ByValue,`pk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_insert(`ptr`: Long,`table`: RustBuffer.ByValue,`values`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(`ptr`: Long,`table`: RustBuffer.ByValue,`rows`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_select(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(`ptr`: Long,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_update_rows(`ptr`: Long,`table`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`set`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_upsert(`ptr`: Long,`table`: RustBuffer.ByValue,`values`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_method_bkndbengine_upsert_many(`ptr`: Long,`table`: RustBuffer.ByValue,`rows`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_create_vector_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,`metric`: RustBuffer.ByValue,`m`: Int,`efConstruction`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_drop_vector_index(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(`ptr`: Long,`table`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_list_vector_indexes(`ptr`: Long,`table`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,`limit`: Int,`matchAll`: Byte,`filter`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(`ptr`: Long,`table`: RustBuffer.ByValue,`column`: RustBuffer.ByValue,`vector`: RustBuffer.ByValue,`limit`: Int,`metric`: RustBuffer.ByValue,`filter`: RustBuffer.ByValue,`exact`: Byte,`efSearch`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_bkndb_ffi_fn_clone_bkndbtransaction(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
@@ -1186,16 +1198,10 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate() and 0xFFFF) != 17739) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_backup() and 0xFFFF) != 17731) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_begin_transaction() and 0xFFFF) != 20627) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete() and 0xFFFF) != 35560) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_close() and 0xFFFF) != 59774) {
@@ -1204,124 +1210,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_compact() and 0xFFFF) != 19869) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_count() and 0xFFFF) != 538) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes() and 0xFFFF) != 28333) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge() and 0xFFFF) != 19597) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk() and 0xFFFF) != 46431) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index() and 0xFFFF) != 48110) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index() and 0xFFFF) != 42108) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node() and 0xFFFF) != 55339) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index() and 0xFFFF) != 17156) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk() and 0xFFFF) != 29999) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table() and 0xFFFF) != 63913) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_degree() and 0xFFFF) != 42609) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_edge() and 0xFFFF) != 45594) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_node() and 0xFFFF) != 3983) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows() and 0xFFFF) != 33801) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index() and 0xFFFF) != 11715) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index() and 0xFFFF) != 15048) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index() and 0xFFFF) != 6273) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table() and 0xFFFF) != 2085) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table() and 0xFFFF) != 27575) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes() and 0xFFFF) != 27470) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path() and 0xFFFF) != 36954) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_find_weighted_path() and 0xFFFF) != 8679) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_get_edge() and 0xFFFF) != 45481) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_get_node() and 0xFFFF) != 2294) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row() and 0xFFFF) != 9466) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_graph_query() and 0xFFFF) != 59322) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_insert() and 0xFFFF) != 23042) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many() and 0xFFFF) != 9293) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed() and 0xFFFF) != 53864) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes() and 0xFFFF) != 57865) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes() and 0xFFFF) != 6192) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables() and 0xFFFF) != 21732) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors() and 0xFFFF) != 58866) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_in() and 0xFFFF) != 30079) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out() and 0xFFFF) != 62954) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_nodes_by_label() and 0xFFFF) != 32913) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes() and 0xFFFF) != 31135) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text() and 0xFFFF) != 2275) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector() and 0xFFFF) != 4355) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_select() and 0xFFFF) != 42895) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_sql() and 0xFFFF) != 22552) {
@@ -1330,34 +1222,163 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_stats() and 0xFFFF) != 27697) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() and 0xFFFF) != 11272) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema() and 0xFFFF) != 26297) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs() and 0xFFFF) != 47001) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_traverse() and 0xFFFF) != 23940) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_update_edge_properties() and 0xFFFF) != 43792) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_update_node_properties() and 0xFFFF) != 35215) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_update_rows() and 0xFFFF) != 63732) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert() and 0xFFFF) != 23307) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many() and 0xFFFF) != 7825) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_verify_integrity() and 0xFFFF) != 18796) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete() and 0xFFFF) != 62417) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes() and 0xFFFF) != 32168) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge() and 0xFFFF) != 65203) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk() and 0xFFFF) != 20448) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node() and 0xFFFF) != 549) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index() and 0xFFFF) != 45894) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk() and 0xFFFF) != 25652) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_degree() and 0xFFFF) != 8745) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_edge() and 0xFFFF) != 44180) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_node() and 0xFFFF) != 33412) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index() and 0xFFFF) != 19003) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes() and 0xFFFF) != 37009) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path() and 0xFFFF) != 13952) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_find_weighted_path() and 0xFFFF) != 12824) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_get_edge() and 0xFFFF) != 56760) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_get_node() and 0xFFFF) != 29664) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes() and 0xFFFF) != 22714) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors() and 0xFFFF) != 49578) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_in() and 0xFFFF) != 31702) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out() and 0xFFFF) != 47756) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_nodes_by_label() and 0xFFFF) != 64775) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes() and 0xFFFF) != 22344) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() and 0xFFFF) != 18892) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs() and 0xFFFF) != 25978) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_traverse() and 0xFFFF) != 62505) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_update_edge_properties() and 0xFFFF) != 46926) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_update_node_properties() and 0xFFFF) != 44611) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate() and 0xFFFF) != 47230) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_count() and 0xFFFF) != 53047) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index() and 0xFFFF) != 19937) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table() and 0xFFFF) != 61281) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows() and 0xFFFF) != 6663) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index() and 0xFFFF) != 17412) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table() and 0xFFFF) != 11423) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table() and 0xFFFF) != 32363) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row() and 0xFFFF) != 22620) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_insert() and 0xFFFF) != 63941) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many() and 0xFFFF) != 52456) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables() and 0xFFFF) != 56399) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_select() and 0xFFFF) != 57225) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema() and 0xFFFF) != 13909) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_update_rows() and 0xFFFF) != 58361) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert() and 0xFFFF) != 18217) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many() and 0xFFFF) != 47946) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index() and 0xFFFF) != 3697) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_create_vector_index() and 0xFFFF) != 36998) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index() and 0xFFFF) != 17313) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_vector_index() and 0xFFFF) != 44571) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes() and 0xFFFF) != 64569) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_list_vector_indexes() and 0xFFFF) != 5594) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text() and 0xFFFF) != 30247) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector() and 0xFFFF) != 59450) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_bkndb_ffi_checksum_method_bkndbtransaction_commit() and 0xFFFF) != 11719) {
@@ -1932,12 +1953,6 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 public interface BknDbEngineInterface {
     
     /**
-     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
-     * `group_by`, returns exactly one row.
-     */
-    fun `aggregate`(`table`: kotlin.String, `query`: FfiQuery, `groupBy`: List<kotlin.String>, `aggregates`: List<FfiAgg>): List<FfiAggregateRow>
-    
-    /**
      * Writes a consistent, compacted copy of everything committed so far to
      * a new file at `dest` (which must not exist), without blocking readers
      * or writers. On-disk databases only.
@@ -1952,11 +1967,6 @@ public interface BknDbEngineInterface {
     fun `beginTransaction`(): BknDbTransaction
     
     /**
-     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
-     */
-    fun `cascadeDelete`(`root`: kotlin.ULong, `containmentEdge`: kotlin.String): List<kotlin.ULong>
-    
-    /**
      * Closes the database, releasing its file lock. Every later call fails
      * with `DatabaseClosed`. Idempotent; fails while a transaction is open.
      */
@@ -1968,7 +1978,38 @@ public interface BknDbEngineInterface {
      */
     fun `compact`()
     
-    fun `count`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong
+    /**
+     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+     */
+    fun `graphQuery`(`query`: kotlin.String, `positional`: List<FfiPropValue> = listOf(), `named`: Map<kotlin.String, FfiPropValue>? = null): FfiQueryResult
+    
+    fun `isClosed`(): kotlin.Boolean
+    
+    /**
+     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+     * a `SELECT` against a snapshot, anything else in its own atomic write
+     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+     * `named`.
+     */
+    fun `sql`(`query`: kotlin.String, `positional`: List<FfiPropValue> = listOf(), `named`: Map<kotlin.String, FfiPropValue>? = null): FfiQueryResult
+    
+    /**
+     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
+     * storage figures for on-disk databases.
+     */
+    fun `stats`(): FfiDbStats
+    
+    /**
+     * Re-reads and checksums every stored byte, failing with `Corruption`
+     * on the first damaged structure.
+     */
+    fun `verifyIntegrity`(): FfiIntegrityReport
+    
+    /**
+     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
+     */
+    fun `cascadeDelete`(`root`: kotlin.ULong, `containmentEdge`: kotlin.String): List<kotlin.ULong>
     
     /**
      * Number of nodes with `label`.
@@ -1984,17 +2025,6 @@ public interface BknDbEngineInterface {
      * Creates multiple edges in a single atomic transaction.
      */
     fun `createEdgesBulk`(`edges`: List<FfiEdgeInput>): List<kotlin.ULong>
-    
-    /**
-     * Builds a full-text (BM25) index over a text column, backfilling
-     * existing rows; `false` if it already exists.
-     */
-    fun `createFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean
-    
-    /**
-     * Adds a (backfilled) secondary index.
-     */
-    fun `createIndex`(`table`: kotlin.String, `column`: kotlin.String)
     
     /**
      * Creates a single graph node with the given label and properties.
@@ -2013,12 +2043,6 @@ public interface BknDbEngineInterface {
     fun `createNodesBulk`(`nodes`: List<FfiNodeInput>): List<kotlin.ULong>
     
     /**
-     * Registers a table. Returns `false` if an identical definition already
-     * exists; fails if a different one does (use `ensure_table` to migrate).
-     */
-    fun `createTable`(`schema`: FfiTableSchema): kotlin.Boolean
-    
-    /**
      * Number of edges at `node` in `direction` (optionally of one type).
      */
     fun `degree`(`node`: kotlin.ULong, `direction`: FfiDirection, `edgeType`: kotlin.String?): kotlin.ULong
@@ -2033,27 +2057,7 @@ public interface BknDbEngineInterface {
      */
     fun `deleteNode`(`id`: kotlin.ULong)
     
-    /**
-     * Deletes every row matching `query`; returns how many were removed.
-     */
-    fun `deleteRows`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong
-    
-    fun `dropFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean
-    
-    fun `dropIndex`(`table`: kotlin.String, `column`: kotlin.String)
-    
     fun `dropNodeIndex`(`label`: kotlin.String, `property`: kotlin.String): kotlin.Boolean
-    
-    /**
-     * Deletes a table and all its rows; returns whether it existed.
-     */
-    fun `dropTable`(`name`: kotlin.String): kotlin.Boolean
-    
-    /**
-     * Creates the table, or migrates the existing one to `schema` (columns,
-     * constraints and indexes; existing rows are backfilled/validated).
-     */
-    fun `ensureTable`(`schema`: FfiTableSchema)
     
     /**
      * Ids of nodes with `label` whose `property` equals `value`, ascending.
@@ -2084,29 +2088,7 @@ public interface BknDbEngineInterface {
      */
     fun `getNode`(`id`: kotlin.ULong): FfiNodeRecord?
     
-    fun `getRow`(`table`: kotlin.String, `pk`: FfiPropValue): FfiRow?
-    
-    /**
-     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
-     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
-     */
-    fun `graphQuery`(`query`: kotlin.String, `positional`: List<FfiPropValue> = listOf(), `named`: Map<kotlin.String, FfiPropValue>? = null): FfiQueryResult
-    
-    /**
-     * Inserts a row; returns its primary key (generated for auto-increment
-     * tables). Fails with `DuplicateKey` if the key is taken.
-     */
-    fun `insert`(`table`: kotlin.String, `values`: Map<kotlin.String, FfiPropValue>): FfiPropValue
-    
-    fun `insertMany`(`table`: kotlin.String, `rows`: List<Map<kotlin.String, FfiPropValue>>): List<FfiPropValue>
-    
-    fun `isClosed`(): kotlin.Boolean
-    
-    fun `listFulltextIndexes`(`table`: kotlin.String): List<kotlin.String>
-    
     fun `listNodeIndexes`(): List<FfiPropertyIndex>
-    
-    fun `listTables`(): List<FfiTableSchema>
     
     /**
      * Neighbors of `node` in `direction`, over every edge type unless
@@ -2136,40 +2118,10 @@ public interface BknDbEngineInterface {
     fun `rebuildGraphIndexes`()
     
     /**
-     * Up to `limit` rows whose `column` best matches `query` (BM25).
-     * `word*` is a prefix match; `match_all` requires every word.
-     */
-    fun `searchText`(`table`: kotlin.String, `column`: kotlin.String, `query`: kotlin.String, `limit`: kotlin.UInt, `matchAll`: kotlin.Boolean = false, `filter`: List<FfiExprNode> = listOf()): List<FfiScoredRow>
-    
-    /**
-     * The `limit` rows whose embedding in `column` (a list of numbers, or
-     * bytes of little-endian f32s) is nearest to `vector`.
-     */
-    fun `searchVector`(`table`: kotlin.String, `column`: kotlin.String, `vector`: List<kotlin.Float>, `limit`: kotlin.UInt, `metric`: FfiVectorMetric, `filter`: List<FfiExprNode> = listOf()): List<FfiScoredRow>
-    
-    fun `select`(`table`: kotlin.String, `query`: FfiQuery): List<FfiRow>
-    
-    /**
-     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
-     * a `SELECT` against a snapshot, anything else in its own atomic write
-     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
-     * `named`.
-     */
-    fun `sql`(`query`: kotlin.String, `positional`: List<FfiPropValue> = listOf(), `named`: Map<kotlin.String, FfiPropValue>? = null): FfiQueryResult
-    
-    /**
-     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
-     * storage figures for on-disk databases.
-     */
-    fun `stats`(): FfiDbStats
-    
-    /**
      * Ingests graph nodes, edges and relational rows (upserted by primary
      * key) in a single atomic transaction.
      */
     fun `syncBatch`(`batch`: FfiSyncBatch): FfiSyncResult
-    
-    fun `tableSchema`(`name`: kotlin.String): FfiTableSchema?
     
     /**
      * Finds the top `k` hub nodes by degree centrality, optionally filtered by node label.
@@ -2195,6 +2147,59 @@ public interface BknDbEngineInterface {
     fun `updateNodeProperties`(`id`: kotlin.ULong, `set`: Map<kotlin.String, FfiPropValue>, `unset`: List<kotlin.String>)
     
     /**
+     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
+     * `group_by`, returns exactly one row.
+     */
+    fun `aggregate`(`table`: kotlin.String, `query`: FfiQuery, `groupBy`: List<kotlin.String>, `aggregates`: List<FfiAgg>): List<FfiAggregateRow>
+    
+    fun `count`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong
+    
+    /**
+     * Adds a (backfilled) secondary index.
+     */
+    fun `createIndex`(`table`: kotlin.String, `column`: kotlin.String)
+    
+    /**
+     * Registers a table. Returns `false` if an identical definition already
+     * exists; fails if a different one does (use `ensure_table` to migrate).
+     */
+    fun `createTable`(`schema`: FfiTableSchema): kotlin.Boolean
+    
+    /**
+     * Deletes every row matching `query`; returns how many were removed.
+     */
+    fun `deleteRows`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong
+    
+    fun `dropIndex`(`table`: kotlin.String, `column`: kotlin.String)
+    
+    /**
+     * Deletes a table and all its rows; returns whether it existed.
+     */
+    fun `dropTable`(`name`: kotlin.String): kotlin.Boolean
+    
+    /**
+     * Creates the table, or migrates the existing one to `schema` (columns,
+     * constraints and indexes; existing rows are backfilled/validated).
+     */
+    fun `ensureTable`(`schema`: FfiTableSchema)
+    
+    fun `getRow`(`table`: kotlin.String, `pk`: FfiPropValue): FfiRow?
+    
+    /**
+     * Inserts a row; returns its primary key (generated for auto-increment
+     * tables). Fails with `DuplicateKey` if the key is taken.
+     */
+    fun `insert`(`table`: kotlin.String, `values`: Map<kotlin.String, FfiPropValue>): FfiPropValue
+    
+    fun `insertMany`(`table`: kotlin.String, `rows`: List<Map<kotlin.String, FfiPropValue>>): List<FfiPropValue>
+    
+    fun `listTables`(): List<FfiTableSchema>
+    
+    fun `select`(`table`: kotlin.String, `query`: FfiQuery): List<FfiRow>
+    
+    fun `tableSchema`(`name`: kotlin.String): FfiTableSchema?
+    
+    /**
      * Sets the columns in `set` on every row matching `query`; returns how
      * many rows changed.
      */
@@ -2208,10 +2213,39 @@ public interface BknDbEngineInterface {
     fun `upsertMany`(`table`: kotlin.String, `rows`: List<Map<kotlin.String, FfiPropValue>>): List<FfiPropValue>
     
     /**
-     * Re-reads and checksums every stored byte, failing with `Corruption`
-     * on the first damaged structure.
+     * Builds a full-text (BM25) index over a text column, backfilling
+     * existing rows; `false` if it already exists.
      */
-    fun `verifyIntegrity`(): FfiIntegrityReport
+    fun `createFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean
+    
+    /**
+     * Builds an approximate (HNSW) vector index over a list/bytes embedding
+     * column for `metric`, backfilling existing rows; `false` if the column
+     * already has one.
+     */
+    fun `createVectorIndex`(`table`: kotlin.String, `column`: kotlin.String, `metric`: FfiVectorMetric, `m`: kotlin.UInt = 16u, `efConstruction`: kotlin.UInt = 200u): kotlin.Boolean
+    
+    fun `dropFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean
+    
+    fun `dropVectorIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean
+    
+    fun `listFulltextIndexes`(`table`: kotlin.String): List<kotlin.String>
+    
+    fun `listVectorIndexes`(`table`: kotlin.String): List<FfiVectorIndexInfo>
+    
+    /**
+     * Up to `limit` rows whose `column` best matches `query` (BM25).
+     * `word*` is a prefix match; `match_all` requires every word.
+     */
+    fun `searchText`(`table`: kotlin.String, `column`: kotlin.String, `query`: kotlin.String, `limit`: kotlin.UInt, `matchAll`: kotlin.Boolean = false, `filter`: List<FfiExprNode> = listOf()): List<FfiScoredRow>
+    
+    /**
+     * The `limit` rows whose embedding in `column` (a list of numbers, or
+     * bytes of little-endian f32s) is nearest to `vector`. Uses the column's
+     * vector index when it has one for `metric` (approximate; `ef_search`
+     * trades speed for recall), unless `exact` forces a full scan.
+     */
+    fun `searchVector`(`table`: kotlin.String, `column`: kotlin.String, `vector`: List<kotlin.Float>, `limit`: kotlin.UInt, `metric`: FfiVectorMetric, `filter`: List<FfiExprNode> = listOf(), `exact`: kotlin.Boolean = false, `efSearch`: kotlin.UInt? = null): List<FfiScoredRow>
     
     companion object
 }
@@ -2322,28 +2356,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
 
     
     /**
-     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
-     * `group_by`, returns exactly one row.
-     */
-    @Throws(FfiBknException::class)override fun `aggregate`(`table`: kotlin.String, `query`: FfiQuery, `groupBy`: List<kotlin.String>, `aggregates`: List<FfiAgg>): List<FfiAggregateRow> {
-            return FfiConverterSequenceTypeFfiAggregateRow.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterTypeFfiQuery.lower(`query`),
-        FfiConverterSequenceString.lower(`groupBy`),
-        FfiConverterSequenceTypeFfiAgg.lower(`aggregates`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
      * Writes a consistent, compacted copy of everything committed so far to
      * a new file at `dest` (which must not exist), without blocking readers
      * or writers. On-disk databases only.
@@ -2374,25 +2386,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
     UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_begin_transaction(
         it,
         _status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
-     */
-    @Throws(FfiBknException::class)override fun `cascadeDelete`(`root`: kotlin.ULong, `containmentEdge`: kotlin.String): List<kotlin.ULong> {
-            return FfiConverterSequenceULong.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_cascade_delete(
-        it,
-        
-        FfiConverterULong.lower(`root`),
-        FfiConverterString.lower(`containmentEdge`),_status)
 }
     }
     )
@@ -2434,15 +2427,111 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
     
 
     
-    @Throws(FfiBknException::class)override fun `count`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong {
-            return FfiConverterULong.lift(
+    /**
+     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+     */
+    @Throws(FfiBknException::class)override fun `graphQuery`(`query`: kotlin.String, `positional`: List<FfiPropValue>, `named`: Map<kotlin.String, FfiPropValue>?): FfiQueryResult {
+            return FfiConverterTypeFfiQueryResult.lift(
     callWithHandle {
     uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_count(
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(
         it,
         
-        FfiConverterString.lower(`table`),
-        FfiConverterTypeFfiQuery.lower(`query`),_status)
+        FfiConverterString.lower(`query`),
+        FfiConverterSequenceTypeFfiPropValue.lower(`positional`),
+        FfiConverterOptionalMapStringTypeFfiPropValue.lower(`named`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `isClosed`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+     * a `SELECT` against a snapshot, anything else in its own atomic write
+     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+     * `named`.
+     */
+    @Throws(FfiBknException::class)override fun `sql`(`query`: kotlin.String, `positional`: List<FfiPropValue>, `named`: Map<kotlin.String, FfiPropValue>?): FfiQueryResult {
+            return FfiConverterTypeFfiQueryResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_sql(
+        it,
+        
+        FfiConverterString.lower(`query`),
+        FfiConverterSequenceTypeFfiPropValue.lower(`positional`),
+        FfiConverterOptionalMapStringTypeFfiPropValue.lower(`named`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
+     * storage figures for on-disk databases.
+     */
+    @Throws(FfiBknException::class)override fun `stats`(): FfiDbStats {
+            return FfiConverterTypeFfiDbStats.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_stats(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Re-reads and checksums every stored byte, failing with `Corruption`
+     * on the first damaged structure.
+     */
+    @Throws(FfiBknException::class)override fun `verifyIntegrity`(): FfiIntegrityReport {
+            return FfiConverterTypeFfiIntegrityReport.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
+     */
+    @Throws(FfiBknException::class)override fun `cascadeDelete`(`root`: kotlin.ULong, `containmentEdge`: kotlin.String): List<kotlin.ULong> {
+            return FfiConverterSequenceULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_cascade_delete(
+        it,
+        
+        FfiConverterULong.lower(`root`),
+        FfiConverterString.lower(`containmentEdge`),_status)
 }
     }
     )
@@ -2508,44 +2597,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
 
     
     /**
-     * Builds a full-text (BM25) index over a text column, backfilling
-     * existing rows; `false` if it already exists.
-     */
-    @Throws(FfiBknException::class)override fun `createFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterString.lower(`column`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Adds a (backfilled) secondary index.
-     */
-    @Throws(FfiBknException::class)override fun `createIndex`(`table`: kotlin.String, `column`: kotlin.String)
-        = 
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterString.lower(`column`),_status)
-}
-    }
-    
-    
-
-    
-    /**
      * Creates a single graph node with the given label and properties.
      */
     @Throws(FfiBknException::class)override fun `createNode`(`label`: kotlin.String, `properties`: Map<kotlin.String, FfiPropValue>): kotlin.ULong {
@@ -2595,25 +2646,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
         it,
         
         FfiConverterSequenceTypeFfiNodeInput.lower(`nodes`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Registers a table. Returns `false` if an identical definition already
-     * exists; fails if a different one does (use `ensure_table` to migrate).
-     */
-    @Throws(FfiBknException::class)override fun `createTable`(`schema`: FfiTableSchema): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(
-        it,
-        
-        FfiConverterTypeFfiTableSchema.lower(`schema`),_status)
 }
     }
     )
@@ -2676,56 +2708,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
     
 
     
-    /**
-     * Deletes every row matching `query`; returns how many were removed.
-     */
-    @Throws(FfiBknException::class)override fun `deleteRows`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong {
-            return FfiConverterULong.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterTypeFfiQuery.lower(`query`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `dropFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterString.lower(`column`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `dropIndex`(`table`: kotlin.String, `column`: kotlin.String)
-        = 
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterString.lower(`column`),_status)
-}
-    }
-    
-    
-
-    
     @Throws(FfiBknException::class)override fun `dropNodeIndex`(`label`: kotlin.String, `property`: kotlin.String): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     callWithHandle {
@@ -2739,42 +2721,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
     }
     )
     }
-    
-
-    
-    /**
-     * Deletes a table and all its rows; returns whether it existed.
-     */
-    @Throws(FfiBknException::class)override fun `dropTable`(`name`: kotlin.String): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(
-        it,
-        
-        FfiConverterString.lower(`name`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Creates the table, or migrates the existing one to `schema` (columns,
-     * constraints and indexes; existing rows are backfilled/validated).
-     */
-    @Throws(FfiBknException::class)override fun `ensureTable`(`schema`: FfiTableSchema)
-        = 
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(
-        it,
-        
-        FfiConverterTypeFfiTableSchema.lower(`schema`),_status)
-}
-    }
-    
     
 
     
@@ -2882,126 +2828,11 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
     
 
     
-    @Throws(FfiBknException::class)override fun `getRow`(`table`: kotlin.String, `pk`: FfiPropValue): FfiRow? {
-            return FfiConverterOptionalTypeFfiRow.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterTypeFfiPropValue.lower(`pk`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
-     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
-     */
-    @Throws(FfiBknException::class)override fun `graphQuery`(`query`: kotlin.String, `positional`: List<FfiPropValue>, `named`: Map<kotlin.String, FfiPropValue>?): FfiQueryResult {
-            return FfiConverterTypeFfiQueryResult.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(
-        it,
-        
-        FfiConverterString.lower(`query`),
-        FfiConverterSequenceTypeFfiPropValue.lower(`positional`),
-        FfiConverterOptionalMapStringTypeFfiPropValue.lower(`named`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Inserts a row; returns its primary key (generated for auto-increment
-     * tables). Fails with `DuplicateKey` if the key is taken.
-     */
-    @Throws(FfiBknException::class)override fun `insert`(`table`: kotlin.String, `values`: Map<kotlin.String, FfiPropValue>): FfiPropValue {
-            return FfiConverterTypeFfiPropValue.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_insert(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterMapStringTypeFfiPropValue.lower(`values`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `insertMany`(`table`: kotlin.String, `rows`: List<Map<kotlin.String, FfiPropValue>>): List<FfiPropValue> {
-            return FfiConverterSequenceTypeFfiPropValue.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterSequenceMapStringTypeFfiPropValue.lower(`rows`),_status)
-}
-    }
-    )
-    }
-    
-
-    override fun `isClosed`(): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `listFulltextIndexes`(`table`: kotlin.String): List<kotlin.String> {
-            return FfiConverterSequenceString.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(
-        it,
-        
-        FfiConverterString.lower(`table`),_status)
-}
-    }
-    )
-    }
-    
-
-    
     @Throws(FfiBknException::class)override fun `listNodeIndexes`(): List<FfiPropertyIndex> {
             return FfiConverterSequenceTypeFfiPropertyIndex.lift(
     callWithHandle {
     uniffiRustCallWithError(FfiBknException) { _status ->
     UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_list_node_indexes(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `listTables`(): List<FfiTableSchema> {
-            return FfiConverterSequenceTypeFfiTableSchema.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(
         it,
         _status)
 }
@@ -3106,111 +2937,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
 
     
     /**
-     * Up to `limit` rows whose `column` best matches `query` (BM25).
-     * `word*` is a prefix match; `match_all` requires every word.
-     */
-    @Throws(FfiBknException::class)override fun `searchText`(`table`: kotlin.String, `column`: kotlin.String, `query`: kotlin.String, `limit`: kotlin.UInt, `matchAll`: kotlin.Boolean, `filter`: List<FfiExprNode>): List<FfiScoredRow> {
-            return FfiConverterSequenceTypeFfiScoredRow.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterString.lower(`column`),
-        FfiConverterString.lower(`query`),
-        FfiConverterUInt.lower(`limit`),
-        FfiConverterBoolean.lower(`matchAll`),
-        FfiConverterSequenceTypeFfiExprNode.lower(`filter`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * The `limit` rows whose embedding in `column` (a list of numbers, or
-     * bytes of little-endian f32s) is nearest to `vector`.
-     */
-    @Throws(FfiBknException::class)override fun `searchVector`(`table`: kotlin.String, `column`: kotlin.String, `vector`: List<kotlin.Float>, `limit`: kotlin.UInt, `metric`: FfiVectorMetric, `filter`: List<FfiExprNode>): List<FfiScoredRow> {
-            return FfiConverterSequenceTypeFfiScoredRow.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterString.lower(`column`),
-        FfiConverterSequenceFloat.lower(`vector`),
-        FfiConverterUInt.lower(`limit`),
-        FfiConverterTypeFfiVectorMetric.lower(`metric`),
-        FfiConverterSequenceTypeFfiExprNode.lower(`filter`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `select`(`table`: kotlin.String, `query`: FfiQuery): List<FfiRow> {
-            return FfiConverterSequenceTypeFfiRow.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_select(
-        it,
-        
-        FfiConverterString.lower(`table`),
-        FfiConverterTypeFfiQuery.lower(`query`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
-     * a `SELECT` against a snapshot, anything else in its own atomic write
-     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
-     * `named`.
-     */
-    @Throws(FfiBknException::class)override fun `sql`(`query`: kotlin.String, `positional`: List<FfiPropValue>, `named`: Map<kotlin.String, FfiPropValue>?): FfiQueryResult {
-            return FfiConverterTypeFfiQueryResult.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_sql(
-        it,
-        
-        FfiConverterString.lower(`query`),
-        FfiConverterSequenceTypeFfiPropValue.lower(`positional`),
-        FfiConverterOptionalMapStringTypeFfiPropValue.lower(`named`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
-     * storage figures for on-disk databases.
-     */
-    @Throws(FfiBknException::class)override fun `stats`(): FfiDbStats {
-            return FfiConverterTypeFfiDbStats.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_stats(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
      * Ingests graph nodes, edges and relational rows (upserted by primary
      * key) in a single atomic transaction.
      */
@@ -3222,21 +2948,6 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
         it,
         
         FfiConverterTypeFfiSyncBatch.lower(`batch`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    @Throws(FfiBknException::class)override fun `tableSchema`(`name`: kotlin.String): FfiTableSchema? {
-            return FfiConverterOptionalTypeFfiTableSchema.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(
-        it,
-        
-        FfiConverterString.lower(`name`),_status)
 }
     }
     )
@@ -3328,6 +3039,248 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
 
     
     /**
+     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
+     * `group_by`, returns exactly one row.
+     */
+    @Throws(FfiBknException::class)override fun `aggregate`(`table`: kotlin.String, `query`: FfiQuery, `groupBy`: List<kotlin.String>, `aggregates`: List<FfiAgg>): List<FfiAggregateRow> {
+            return FfiConverterSequenceTypeFfiAggregateRow.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterTypeFfiQuery.lower(`query`),
+        FfiConverterSequenceString.lower(`groupBy`),
+        FfiConverterSequenceTypeFfiAgg.lower(`aggregates`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `count`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_count(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterTypeFfiQuery.lower(`query`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Adds a (backfilled) secondary index.
+     */
+    @Throws(FfiBknException::class)override fun `createIndex`(`table`: kotlin.String, `column`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Registers a table. Returns `false` if an identical definition already
+     * exists; fails if a different one does (use `ensure_table` to migrate).
+     */
+    @Throws(FfiBknException::class)override fun `createTable`(`schema`: FfiTableSchema): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(
+        it,
+        
+        FfiConverterTypeFfiTableSchema.lower(`schema`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Deletes every row matching `query`; returns how many were removed.
+     */
+    @Throws(FfiBknException::class)override fun `deleteRows`(`table`: kotlin.String, `query`: FfiQuery): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterTypeFfiQuery.lower(`query`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `dropIndex`(`table`: kotlin.String, `column`: kotlin.String)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Deletes a table and all its rows; returns whether it existed.
+     */
+    @Throws(FfiBknException::class)override fun `dropTable`(`name`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(
+        it,
+        
+        FfiConverterString.lower(`name`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Creates the table, or migrates the existing one to `schema` (columns,
+     * constraints and indexes; existing rows are backfilled/validated).
+     */
+    @Throws(FfiBknException::class)override fun `ensureTable`(`schema`: FfiTableSchema)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(
+        it,
+        
+        FfiConverterTypeFfiTableSchema.lower(`schema`),_status)
+}
+    }
+    
+    
+
+    
+    @Throws(FfiBknException::class)override fun `getRow`(`table`: kotlin.String, `pk`: FfiPropValue): FfiRow? {
+            return FfiConverterOptionalTypeFfiRow.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterTypeFfiPropValue.lower(`pk`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Inserts a row; returns its primary key (generated for auto-increment
+     * tables). Fails with `DuplicateKey` if the key is taken.
+     */
+    @Throws(FfiBknException::class)override fun `insert`(`table`: kotlin.String, `values`: Map<kotlin.String, FfiPropValue>): FfiPropValue {
+            return FfiConverterTypeFfiPropValue.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_insert(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterMapStringTypeFfiPropValue.lower(`values`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `insertMany`(`table`: kotlin.String, `rows`: List<Map<kotlin.String, FfiPropValue>>): List<FfiPropValue> {
+            return FfiConverterSequenceTypeFfiPropValue.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterSequenceMapStringTypeFfiPropValue.lower(`rows`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `listTables`(): List<FfiTableSchema> {
+            return FfiConverterSequenceTypeFfiTableSchema.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `select`(`table`: kotlin.String, `query`: FfiQuery): List<FfiRow> {
+            return FfiConverterSequenceTypeFfiRow.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_select(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterTypeFfiQuery.lower(`query`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `tableSchema`(`name`: kotlin.String): FfiTableSchema? {
+            return FfiConverterOptionalTypeFfiTableSchema.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(
+        it,
+        
+        FfiConverterString.lower(`name`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Sets the columns in `set` on every row matching `query`; returns how
      * many rows changed.
      */
@@ -3384,16 +3337,156 @@ open class BknDbEngine: Disposable, AutoCloseable, BknDbEngineInterface
 
     
     /**
-     * Re-reads and checksums every stored byte, failing with `Corruption`
-     * on the first damaged structure.
+     * Builds a full-text (BM25) index over a text column, backfilling
+     * existing rows; `false` if it already exists.
      */
-    @Throws(FfiBknException::class)override fun `verifyIntegrity`(): FfiIntegrityReport {
-            return FfiConverterTypeFfiIntegrityReport.lift(
+    @Throws(FfiBknException::class)override fun `createFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
     callWithHandle {
     uniffiRustCallWithError(FfiBknException) { _status ->
-    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(
         it,
-        _status)
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Builds an approximate (HNSW) vector index over a list/bytes embedding
+     * column for `metric`, backfilling existing rows; `false` if the column
+     * already has one.
+     */
+    @Throws(FfiBknException::class)override fun `createVectorIndex`(`table`: kotlin.String, `column`: kotlin.String, `metric`: FfiVectorMetric, `m`: kotlin.UInt, `efConstruction`: kotlin.UInt): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_create_vector_index(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),
+        FfiConverterTypeFfiVectorMetric.lower(`metric`),
+        FfiConverterUInt.lower(`m`),
+        FfiConverterUInt.lower(`efConstruction`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `dropFulltextIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `dropVectorIndex`(`table`: kotlin.String, `column`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_drop_vector_index(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `listFulltextIndexes`(`table`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(
+        it,
+        
+        FfiConverterString.lower(`table`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiBknException::class)override fun `listVectorIndexes`(`table`: kotlin.String): List<FfiVectorIndexInfo> {
+            return FfiConverterSequenceTypeFfiVectorIndexInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_list_vector_indexes(
+        it,
+        
+        FfiConverterString.lower(`table`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Up to `limit` rows whose `column` best matches `query` (BM25).
+     * `word*` is a prefix match; `match_all` requires every word.
+     */
+    @Throws(FfiBknException::class)override fun `searchText`(`table`: kotlin.String, `column`: kotlin.String, `query`: kotlin.String, `limit`: kotlin.UInt, `matchAll`: kotlin.Boolean, `filter`: List<FfiExprNode>): List<FfiScoredRow> {
+            return FfiConverterSequenceTypeFfiScoredRow.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),
+        FfiConverterString.lower(`query`),
+        FfiConverterUInt.lower(`limit`),
+        FfiConverterBoolean.lower(`matchAll`),
+        FfiConverterSequenceTypeFfiExprNode.lower(`filter`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The `limit` rows whose embedding in `column` (a list of numbers, or
+     * bytes of little-endian f32s) is nearest to `vector`. Uses the column's
+     * vector index when it has one for `metric` (approximate; `ef_search`
+     * trades speed for recall), unless `exact` forces a full scan.
+     */
+    @Throws(FfiBknException::class)override fun `searchVector`(`table`: kotlin.String, `column`: kotlin.String, `vector`: List<kotlin.Float>, `limit`: kotlin.UInt, `metric`: FfiVectorMetric, `filter`: List<FfiExprNode>, `exact`: kotlin.Boolean, `efSearch`: kotlin.UInt?): List<FfiScoredRow> {
+            return FfiConverterSequenceTypeFfiScoredRow.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiBknException) { _status ->
+    UniffiLib.uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(
+        it,
+        
+        FfiConverterString.lower(`table`),
+        FfiConverterString.lower(`column`),
+        FfiConverterSequenceFloat.lower(`vector`),
+        FfiConverterUInt.lower(`limit`),
+        FfiConverterTypeFfiVectorMetric.lower(`metric`),
+        FfiConverterSequenceTypeFfiExprNode.lower(`filter`),
+        FfiConverterBoolean.lower(`exact`),
+        FfiConverterOptionalUInt.lower(`efSearch`),_status)
 }
     }
     )
@@ -5731,6 +5824,70 @@ public object FfiConverterTypeFfiTypedNeighbor: FfiConverterRustBuffer<FfiTypedN
 
 
 /**
+ * An approximate (HNSW) vector index over one column.
+ */
+data class FfiVectorIndexInfo (
+    var `column`: kotlin.String
+    , 
+    var `metric`: FfiVectorMetric
+    , 
+    var `m`: kotlin.UInt
+    , 
+    var `efConstruction`: kotlin.UInt
+    , 
+    /**
+     * `None` while the index is empty.
+     */
+    var `dimensions`: kotlin.UInt?
+    , 
+    var `vectors`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiVectorIndexInfo: FfiConverterRustBuffer<FfiVectorIndexInfo> {
+    override fun read(buf: ByteBuffer): FfiVectorIndexInfo {
+        return FfiVectorIndexInfo(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiVectorMetric.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiVectorIndexInfo) = (
+            FfiConverterString.allocationSize(value.`column`) +
+            FfiConverterTypeFfiVectorMetric.allocationSize(value.`metric`) +
+            FfiConverterUInt.allocationSize(value.`m`) +
+            FfiConverterUInt.allocationSize(value.`efConstruction`) +
+            FfiConverterOptionalUInt.allocationSize(value.`dimensions`) +
+            FfiConverterULong.allocationSize(value.`vectors`)
+    )
+
+    override fun write(value: FfiVectorIndexInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`column`, buf)
+            FfiConverterTypeFfiVectorMetric.write(value.`metric`, buf)
+            FfiConverterUInt.write(value.`m`, buf)
+            FfiConverterUInt.write(value.`efConstruction`, buf)
+            FfiConverterOptionalUInt.write(value.`dimensions`, buf)
+            FfiConverterULong.write(value.`vectors`, buf)
+    }
+}
+
+
+
+/**
  * A lowest-cost path and its total cost.
  */
 data class FfiWeightedPath (
@@ -7824,6 +7981,34 @@ public object FfiConverterSequenceTypeFfiTypedNeighbor: FfiConverterRustBuffer<L
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiTypedNeighbor.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiVectorIndexInfo: FfiConverterRustBuffer<List<FfiVectorIndexInfo>> {
+    override fun read(buf: ByteBuffer): List<FfiVectorIndexInfo> {
+        val len = buf.getInt()
+        return List<FfiVectorIndexInfo>(len) {
+            FfiConverterTypeFfiVectorIndexInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiVectorIndexInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiVectorIndexInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiVectorIndexInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiVectorIndexInfo.write(it, buf)
         }
     }
 }
