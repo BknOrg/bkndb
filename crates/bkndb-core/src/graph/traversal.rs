@@ -176,6 +176,10 @@ pub(crate) fn find_shortest_path_in<R: StorageReadTx>(
     edge_types: Option<&[&str]>,
 ) -> Result<Option<PathResult>, BknError> {
     if start == target {
+        // A node trivially reaches itself — but only if it exists.
+        if get_node_in(rtx, start)?.is_none() {
+            return Ok(None);
+        }
         return Ok(Some(PathResult {
             steps: vec![PathStep {
                 node: start,

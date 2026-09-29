@@ -1,10 +1,13 @@
 use std::ops::Bound;
 
 use crate::relational::codec::sortable_encode;
-use crate::relational::db::{RelTable, Row};
+use crate::relational::db::{
+    delete_row_in, index_lookup_eq_in, index_lookup_prefix_in, index_lookup_range_in, scan_all_in, update_row_in,
+    RelTable, Row,
+};
 use crate::relational::schema::RelSchema;
 use crate::value::PropValue;
-use crate::{BknError, StorageBackend};
+use crate::{BknError, StorageBackend, StorageReadTx, StorageWriteTx};
 
 #[derive(Clone)]
 enum Predicate {
@@ -79,29 +82,29 @@ fn predicates_match(schema: &RelSchema, predicates: &[Predicate], row: &Row) -> 
 /// is still re-applied as an in-Rust filter afterward — this is a
 /// deliberately simple "pick one index, then filter" strategy, not a
 /// cost-based planner.
-fn candidate_rows<B: StorageBackend>(table: &RelTable<'_, B>, predicates: &[Predicate]) -> Result<Vec<Row>, BknError> {
+fn candidate_rows<R: StorageReadTx>(rtx: &R, schema: &RelSchema, predicates: &[Predicate]) -> Result<Vec<Row>, BknError> {
     if let Some(p) = predicates
         .iter()
-        .find(|p| matches!(p, Predicate::Eq(col, _) if table.schema.is_indexed(col)))
+        .find(|p| matches!(p, Predicate::Eq(col, _) if schema.is_indexed(col)))
     {
         let Predicate::Eq(col, val) = p else { unreachable!() };
-        return table.index_lookup_eq(col, val);
+        return index_lookup_eq_in(rtx, schema, col, val);
     }
     if let Some(p) = predicates
         .iter()
-        .find(|p| matches!(p, Predicate::Prefix(col, _) if table.schema.is_indexed(col)))
+        .find(|p| matches!(p, Predicate::Prefix(col, _) if schema.is_indexed(col)))
     {
         let Predicate::Prefix(col, prefix) = p else { unreachable!() };
-        return table.index_lookup_prefix(col, prefix);
+        return index_lookup_prefix_in(rtx, schema, col, prefix);
     }
     if let Some(p) = predicates
         .iter()
-        .find(|p| matches!(p, Predicate::Range(col, ..) if table.schema.is_indexed(col)))
+        .find(|p| matches!(p, Predicate::Range(col, ..) if schema.is_indexed(col)))
     {
         let Predicate::Range(col, start, end) = p else { unreachable!() };
-        return table.index_lookup_range(col, start, end);
+        return index_lookup_range_in(rtx, schema, col, start, end);
     }
-    table.scan_all()
+    scan_all_in(rtx, schema)
 }
 
 pub struct SelectQuery<'a, B: StorageBackend> {
@@ -153,7 +156,8 @@ impl<'a, B: StorageBackend> SelectQuery<'a, B> {
                 )));
             }
         }
-        let candidates = candidate_rows(&self.table, &self.predicates)?;
+        let rtx = self.table.db.backend.begin_read()?;
+        let candidates = candidate_rows(&rtx, self.table.schema, &self.predicates)?;
         let mut out = Vec::new();
         for row in candidates {
             if predicates_match(self.table.schema, &self.predicates, &row)? {
@@ -203,18 +207,23 @@ impl<'a, B: StorageBackend> UpdateQuery<'a, B> {
     /// returning how many rows were changed. Matching zero rows is not an
     /// error — it returns `Ok(0)` — since this is a predicate-based bulk
     /// operation, not a point lookup by id.
+    ///
+    /// Atomic: matching and every row change happen in one write
+    /// transaction, so an error part-way leaves the table untouched.
     pub fn run(self) -> Result<usize, BknError> {
         if let Some((col, _)) = self.sets.iter().find(|(c, _)| c == self.table.schema.primary_key) {
             return Err(BknError::Encoding(format!("cannot set primary key column '{col}' via update")));
         }
-        let candidates = candidate_rows(&self.table, &self.predicates)?;
+        let schema = self.table.schema;
+        let mut wtx = self.table.db.backend.begin_write()?;
+        let candidates = candidate_rows(&wtx, schema, &self.predicates)?;
         let mut count = 0;
         for row in candidates {
-            if !predicates_match(self.table.schema, &self.predicates, &row)? {
+            if !predicates_match(schema, &self.predicates, &row)? {
                 continue;
             }
             let sets = self.sets.clone();
-            let changed = self.table.update_row(&row.pk, |values| {
+            let changed = update_row_in(&mut wtx, schema, &row.pk, |values| {
                 for (col, val) in sets {
                     values.insert(col, val);
                 }
@@ -223,6 +232,7 @@ impl<'a, B: StorageBackend> UpdateQuery<'a, B> {
                 count += 1;
             }
         }
+        wtx.commit()?;
         Ok(count)
     }
 }
@@ -253,18 +263,22 @@ impl<'a, B: StorageBackend> DeleteQuery<'a, B> {
 
     /// Deletes every row matching the predicates, returning how many rows
     /// were removed. Matching zero rows is not an error — see
-    /// [`UpdateQuery::run`] for the same reasoning.
+    /// [`UpdateQuery::run`] for the same reasoning. Atomic, like
+    /// [`UpdateQuery::run`].
     pub fn run(self) -> Result<usize, BknError> {
-        let candidates = candidate_rows(&self.table, &self.predicates)?;
+        let schema = self.table.schema;
+        let mut wtx = self.table.db.backend.begin_write()?;
+        let candidates = candidate_rows(&wtx, schema, &self.predicates)?;
         let mut count = 0;
         for row in candidates {
-            if !predicates_match(self.table.schema, &self.predicates, &row)? {
+            if !predicates_match(schema, &self.predicates, &row)? {
                 continue;
             }
-            if self.table.delete_row(&row.pk)? {
+            if delete_row_in(&mut wtx, schema, &row.pk)? {
                 count += 1;
             }
         }
+        wtx.commit()?;
         Ok(count)
     }
 }

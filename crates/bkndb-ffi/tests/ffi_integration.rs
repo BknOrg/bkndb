@@ -232,7 +232,7 @@ fn test_sync_batch() {
 #[test]
 fn test_on_disk_persistence() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("mobile_test.redb");
+    let db_path = temp_dir.path().join("mobile_test.bkndb");
     let path_str = db_path.to_str().unwrap().to_string();
 
     let node_id;
@@ -269,4 +269,24 @@ fn test_on_disk_persistence() {
         let edge = engine.get_edge(edge_id).unwrap().expect("edge persisted");
         assert_eq!(edge.edge_type, "TAGGED");
     }
+}
+
+#[test]
+fn test_second_open_of_same_file_reports_database_locked() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("locked.bkndb").to_str().unwrap().to_string();
+    let first = BknDbEngine::open(path.clone()).unwrap();
+    match BknDbEngine::open(path.clone()) {
+        Err(bkndb_ffi::FfiBknError::DatabaseLocked { .. }) => {}
+        Err(e) => panic!("expected DatabaseLocked, got {e}"),
+        Ok(_) => panic!("second open must fail while the first engine is alive"),
+    }
+    drop(first);
+    BknDbEngine::open(path).expect("reopen after the first engine is dropped");
+}
+
+#[test]
+fn test_shortest_path_from_missing_node_to_itself_is_none() {
+    let engine = BknDbEngine::in_memory().unwrap();
+    assert!(engine.find_shortest_path(999, 999, FfiDirection::Out, None).unwrap().is_none());
 }

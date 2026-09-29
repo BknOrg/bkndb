@@ -34,7 +34,8 @@ pub struct WalRecord {
 pub fn append(file: &File, record: &WalRecord) -> Result<(), BknError> {
     let payload = bincode::serialize(record).map_err(enc_err)?;
     let crc = crc32fast::hash(&payload);
-    let len = payload.len() as u32;
+    let len = u32::try_from(payload.len())
+        .map_err(|_| BknError::Backend(format!("transaction too large for one WAL frame ({} bytes, max 4 GiB)", payload.len())))?;
 
     let mut buf = Vec::with_capacity(8 + payload.len());
     buf.extend_from_slice(&len.to_be_bytes());
@@ -53,10 +54,17 @@ pub fn append(file: &File, record: &WalRecord) -> Result<(), BknError> {
 /// the byte range `[start_offset, EOF)` is always pure WAL frames (see
 /// `manifest.rs`'s `wal_region_start` doc comment), so this never needs to
 /// know where the region "ends" ahead of time.
-pub fn replay_from(file: &File, start_offset: u64) -> Result<Vec<WalRecord>, BknError> {
+///
+/// Also returns the absolute offset just past the last valid frame. The
+/// caller must truncate the file there before appending again: `append`
+/// always writes at EOF, so any torn bytes left behind would sit between
+/// the old frames and the new ones, and the *next* replay would stop at
+/// them and drop every commit made after this recovery.
+pub fn replay_from(file: &File, start_offset: u64) -> Result<(Vec<WalRecord>, u64), BknError> {
     let mut reader = BufReader::new(file.try_clone().map_err(io_err)?);
     reader.seek(SeekFrom::Start(start_offset)).map_err(io_err)?;
     let mut records = Vec::new();
+    let mut valid_end = start_offset;
 
     loop {
         let mut header = [0u8; 8];
@@ -78,8 +86,9 @@ pub fn replay_from(file: &File, start_offset: u64) -> Result<Vec<WalRecord>, Bkn
             Err(_) => break,
         };
         records.push(record);
+        valid_end += 8 + len as u64;
     }
-    Ok(records)
+    Ok((records, valid_end))
 }
 
 #[cfg(test)]
@@ -99,7 +108,7 @@ mod tests {
         append(&file, &WalRecord { entries: vec![(b"a".to_vec(), Some(b"1".to_vec()))] }).unwrap();
         append(&file, &WalRecord { entries: vec![(b"a".to_vec(), None)] }).unwrap();
 
-        let records = replay_from(&file, 0).unwrap();
+        let (records, _) = replay_from(&file, 0).unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].entries, vec![(b"a".to_vec(), Some(b"1".to_vec()))]);
         assert_eq!(records[1].entries, vec![(b"a".to_vec(), None)]);
@@ -112,7 +121,7 @@ mod tests {
         let offset_after_first = file.metadata().unwrap().len();
         append(&file, &WalRecord { entries: vec![(b"after".to_vec(), Some(b"y".to_vec()))] }).unwrap();
 
-        let records = replay_from(&file, offset_after_first).unwrap();
+        let (records, _) = replay_from(&file, offset_after_first).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].entries, vec![(b"after".to_vec(), Some(b"y".to_vec()))]);
     }
@@ -129,7 +138,9 @@ mod tests {
         (&file).write_all(&0u32.to_be_bytes()).unwrap();
         (&file).write_all(b"short").unwrap(); // far less than 999 bytes
 
-        let records = replay_from(&file, 0).unwrap();
+        let good_end = 8 + bincode::serialize(&WalRecord { entries: vec![(b"good".to_vec(), Some(b"1".to_vec()))] }).unwrap().len() as u64;
+        let (records, valid_end) = replay_from(&file, 0).unwrap();
+        assert_eq!(valid_end, good_end, "valid_end must point just past the last complete frame");
         assert_eq!(records.len(), 1, "only the first, complete frame should survive replay");
         assert_eq!(records[0].entries, vec![(b"good".to_vec(), Some(b"1".to_vec()))]);
     }
@@ -145,7 +156,7 @@ mod tests {
         (&file).write_all(&0xDEADBEEFu32.to_be_bytes()).unwrap(); // wrong crc
         (&file).write_all(&payload).unwrap();
 
-        let records = replay_from(&file, 0).unwrap();
+        let (records, _) = replay_from(&file, 0).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].entries, vec![(b"good".to_vec(), Some(b"1".to_vec()))]);
     }

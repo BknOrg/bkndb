@@ -2320,6 +2320,34 @@ sealed class FfiBknException: kotlin.Exception() {
             get() = "table=${ `table` }"
     }
     
+    class DatabaseLocked(
+        
+        val `path`: kotlin.String
+        ) : FfiBknException() {
+        override val message
+            get() = "path=${ `path` }"
+    }
+    
+    class DuplicateKey(
+        
+        val `table`: kotlin.String, 
+        
+        val `key`: kotlin.String
+        ) : FfiBknException() {
+        override val message
+            get() = "table=${ `table` }, key=${ `key` }"
+    }
+    
+    class SchemaMismatch(
+        
+        val `table`: kotlin.String, 
+        
+        val `message`: kotlin.String
+        ) : FfiBknException() {
+        override val message
+            get() = "table=${ `table` }, message=${ `message` }"
+    }
+    
 
     
 
@@ -2352,6 +2380,17 @@ public object FfiConverterTypeFfiBknError : FfiConverterRustBuffer<FfiBknExcepti
             5 -> FfiBknException.ReservedTableName(
                 FfiConverterString.read(buf),
                 )
+            6 -> FfiBknException.DatabaseLocked(
+                FfiConverterString.read(buf),
+                )
+            7 -> FfiBknException.DuplicateKey(
+                FfiConverterString.read(buf),
+                FfiConverterString.read(buf),
+                )
+            8 -> FfiBknException.SchemaMismatch(
+                FfiConverterString.read(buf),
+                FfiConverterString.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -2382,6 +2421,23 @@ public object FfiConverterTypeFfiBknError : FfiConverterRustBuffer<FfiBknExcepti
                 4UL
                 + FfiConverterString.allocationSize(value.`table`)
             )
+            is FfiBknException.DatabaseLocked -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`path`)
+            )
+            is FfiBknException.DuplicateKey -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`table`)
+                + FfiConverterString.allocationSize(value.`key`)
+            )
+            is FfiBknException.SchemaMismatch -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`table`)
+                + FfiConverterString.allocationSize(value.`message`)
+            )
         }
     }
 
@@ -2409,6 +2465,23 @@ public object FfiConverterTypeFfiBknError : FfiConverterRustBuffer<FfiBknExcepti
             is FfiBknException.ReservedTableName -> {
                 buf.putInt(5)
                 FfiConverterString.write(value.`table`, buf)
+                Unit
+            }
+            is FfiBknException.DatabaseLocked -> {
+                buf.putInt(6)
+                FfiConverterString.write(value.`path`, buf)
+                Unit
+            }
+            is FfiBknException.DuplicateKey -> {
+                buf.putInt(7)
+                FfiConverterString.write(value.`table`, buf)
+                FfiConverterString.write(value.`key`, buf)
+                Unit
+            }
+            is FfiBknException.SchemaMismatch -> {
+                buf.putInt(8)
+                FfiConverterString.write(value.`table`, buf)
+                FfiConverterString.write(value.`message`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }

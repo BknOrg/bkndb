@@ -7,7 +7,7 @@ use crate::relational::codec::{
     sortable_str_prefix_bounds, upper_bound_bytes,
 };
 use crate::relational::query::{DeleteQuery, SelectQuery, UpdateQuery};
-use crate::relational::schema::RelSchema;
+use crate::relational::schema::{ColumnKind, RelSchema};
 use crate::value::{PropValue, Properties};
 use crate::{BknError, StorageBackend, StorageReadTx, StorageWriteTx};
 
@@ -36,7 +36,7 @@ impl Row {
 /// that shared `Arc<B>` is what makes the two layers "hybrid" rather than
 /// two unrelated databases.
 pub struct RelationalDb<B: StorageBackend> {
-    backend: Arc<B>,
+    pub(crate) backend: Arc<B>,
 }
 
 impl<B: StorageBackend> RelationalDb<B> {
@@ -109,7 +109,7 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
                 .cloned()
                 .ok_or_else(|| BknError::Encoding(format!("missing primary key column '{col}'")))?
         };
-        write_row_in(&mut wtx, self.schema, &pk, &values)?;
+        write_row_in(&mut wtx, self.schema, &pk, &values, OnConflict::Error)?;
         wtx.commit()?;
         Ok(pk)
     }
@@ -134,7 +134,17 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
             ));
         }
         let mut wtx = self.db.backend.begin_write()?;
-        write_row_in(&mut wtx, self.schema, &pk, &values)?;
+        write_row_in(&mut wtx, self.schema, &pk, &values, OnConflict::Error)?;
+        wtx.commit()?;
+        Ok(())
+    }
+
+    /// Inserts the row, or replaces the existing row with the same PK
+    /// (keeping every secondary index consistent). Works on any schema,
+    /// including auto-increment ones.
+    pub fn upsert_with_pk(&self, pk: PropValue, values: Properties) -> Result<(), BknError> {
+        let mut wtx = self.db.backend.begin_write()?;
+        write_row_in(&mut wtx, self.schema, &pk, &values, OnConflict::Replace)?;
         wtx.commit()?;
         Ok(())
     }
@@ -164,33 +174,6 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
         DeleteQuery::new(*self)
     }
 
-    /// Full base-table scan, decoding every row — the fallback path when a
-    /// query has no predicate on an indexed column to narrow the search.
-    pub(crate) fn scan_all(&self) -> Result<Vec<Row>, BknError> {
-        let rtx = self.db.backend.begin_read()?;
-        scan_all_in(&rtx, self.schema)
-    }
-
-    /// Rows whose `column` value exactly equals `value`, via that column's
-    /// secondary index. Caller must have already checked `column` is
-    /// indexed.
-    pub(crate) fn index_lookup_eq(&self, column: &str, value: &PropValue) -> Result<Vec<Row>, BknError> {
-        let rtx = self.db.backend.begin_read()?;
-        index_lookup_eq_in(&rtx, self.schema, column, value)
-    }
-
-    /// Rows whose `column` value falls within `[start, end)` (per the given
-    /// bound kinds), via that column's secondary index.
-    pub(crate) fn index_lookup_range(
-        &self,
-        column: &str,
-        start: &Bound<PropValue>,
-        end: &Bound<PropValue>,
-    ) -> Result<Vec<Row>, BknError> {
-        let rtx = self.db.backend.begin_read()?;
-        index_lookup_range_in(&rtx, self.schema, column, start, end)
-    }
-
     /// Rows whose `column` string value starts with `prefix`, using that
     /// column's secondary index if available, falling back to a full scan.
     pub fn select_prefix(&self, column: &str, prefix: &str) -> Result<Vec<Row>, BknError> {
@@ -209,29 +192,6 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
         }
     }
 
-    pub(crate) fn index_lookup_prefix(&self, column: &str, prefix: &str) -> Result<Vec<Row>, BknError> {
-        let rtx = self.db.backend.begin_read()?;
-        index_lookup_prefix_in(&rtx, self.schema, column, prefix)
-    }
-
-
-    pub(crate) fn delete_row(&self, pk: &PropValue) -> Result<bool, BknError> {
-        let mut wtx = self.db.backend.begin_write()?;
-        let changed = delete_row_in(&mut wtx, self.schema, pk)?;
-        wtx.commit()?;
-        Ok(changed)
-    }
-
-    pub(crate) fn update_row(
-        &self,
-        pk: &PropValue,
-        mutate: impl FnOnce(&mut Properties),
-    ) -> Result<bool, BknError> {
-        let mut wtx = self.db.backend.begin_write()?;
-        let changed = update_row_in(&mut wtx, self.schema, pk, mutate)?;
-        wtx.commit()?;
-        Ok(changed)
-    }
 }
 
 // --- Free functions parameterized over an already-open transaction ---
@@ -242,13 +202,92 @@ impl<'a, B: StorageBackend> RelTable<'a, B> {
 // one caller-held transaction spanning several tables/operations instead of
 // committing after each one.
 
+/// What [`write_row_in`] does when a row with the same primary key already
+/// exists (including one written earlier in the same transaction).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OnConflict {
+    /// Plain insert semantics: fail with [`BknError::DuplicateKey`].
+    Error,
+    /// Upsert semantics: replace the old row, dropping its index entries.
+    Replace,
+}
+
+/// Rejects values whose kind doesn't match the declared column kind, and
+/// columns the schema doesn't declare at all. `Null` is accepted in any
+/// column (there is no NOT NULL constraint yet).
+pub(crate) fn validate_row(schema: &RelSchema, pk: &PropValue, values: &Properties) -> Result<(), BknError> {
+    let mismatch = |message: String| BknError::SchemaMismatch { table: schema.name, message };
+    let check = |name: &str, value: &PropValue| -> Result<(), BknError> {
+        let col = schema
+            .column(name)
+            .ok_or_else(|| mismatch(format!("column '{name}' is not declared in the schema")))?;
+        if !matches!(value, PropValue::Null) && value_kind(value) != col.kind {
+            return Err(mismatch(format!(
+                "column '{name}' expects {:?}, got {:?}",
+                col.kind,
+                value_kind(value)
+            )));
+        }
+        Ok(())
+    };
+    if matches!(pk, PropValue::Null) {
+        return Err(mismatch(format!("primary key '{}' cannot be null", schema.primary_key)));
+    }
+    check(schema.primary_key, pk)?;
+    for (name, value) in values {
+        check(name, value)?;
+    }
+    Ok(())
+}
+
+fn value_kind(v: &PropValue) -> ColumnKind {
+    match v {
+        PropValue::Null => ColumnKind::Null,
+        PropValue::Bool(_) => ColumnKind::Bool,
+        PropValue::Int(_) => ColumnKind::Int,
+        PropValue::Float(_) => ColumnKind::Float,
+        PropValue::Str(_) => ColumnKind::Str,
+        PropValue::Bytes(_) => ColumnKind::Bytes,
+    }
+}
+
+fn pk_display(pk: &PropValue) -> String {
+    match pk {
+        PropValue::Int(i) => i.to_string(),
+        PropValue::Str(s) => format!("{s:?}"),
+        other => format!("{other:?}"),
+    }
+}
+
 pub(crate) fn write_row_in<W: StorageWriteTx>(
     wtx: &mut W,
     schema: &RelSchema,
     pk: &PropValue,
     values: &Properties,
+    on_conflict: OnConflict,
 ) -> Result<(), BknError> {
+    validate_row(schema, pk, values)?;
     let row_key = sortable_encode(pk)?;
+    if let Some(old_bytes) = wtx.get(base_table(schema), &row_key)? {
+        if on_conflict == OnConflict::Error {
+            return Err(BknError::DuplicateKey {
+                table: schema.name,
+                key: pk_display(pk),
+            });
+        }
+        // Replacing: the old row's index entries must go, or index lookups
+        // on its old values would keep returning this pk.
+        let old_row = Row {
+            pk: pk.clone(),
+            values: decode_row(&old_bytes)?,
+        };
+        for &col in schema.indexed_columns {
+            if let Some(v) = old_row.get(schema, col) {
+                wtx.delete(index_table(schema, col), &index_key(v, pk)?)?;
+            }
+        }
+    }
+
     let mut stored = values.clone();
     stored.remove(schema.primary_key);
     wtx.put(base_table(schema), &row_key, &encode_row(&stored)?)?;
@@ -280,7 +319,7 @@ pub(crate) fn insert_bulk_in<W: StorageWriteTx>(
         let start_pk = reserve_pks(wtx, schema, items.len() as u64)?;
         for (i, values) in items.into_iter().enumerate() {
             let pk = PropValue::Int(start_pk + i as i64);
-            write_row_in(wtx, schema, &pk, &values)?;
+            write_row_in(wtx, schema, &pk, &values, OnConflict::Error)?;
             pks.push(pk);
         }
     } else {
@@ -290,7 +329,7 @@ pub(crate) fn insert_bulk_in<W: StorageWriteTx>(
                 .get(col)
                 .cloned()
                 .ok_or_else(|| BknError::Encoding(format!("missing primary key column '{col}'")))?;
-            write_row_in(wtx, schema, &pk, &values)?;
+            write_row_in(wtx, schema, &pk, &values, OnConflict::Error)?;
             pks.push(pk);
         }
     }
@@ -308,7 +347,7 @@ pub(crate) fn insert_with_pk_bulk_in<W: StorageWriteTx>(
         ));
     }
     for (pk, values) in rows {
-        write_row_in(wtx, schema, &pk, &values)?;
+        write_row_in(wtx, schema, &pk, &values, OnConflict::Error)?;
     }
     Ok(())
 }
@@ -414,7 +453,15 @@ fn resolve_index_rows_in<R: StorageReadTx>(
     let mut out = Vec::with_capacity(rows.len());
     for (key, _) in rows {
         let pk = pk_from_index_key(indexed_kind, pk_kind, &key)?;
-        if let Some(row) = get_in(rtx, schema, &pk)? {
+        let Some(row) = get_in(rtx, schema, &pk)? else { continue };
+        // Only trust an index entry that the row still agrees with. Guards
+        // against stale entries in files written before overwrites cleaned
+        // up their old index keys.
+        let current = match row.get(schema, column) {
+            Some(v) => index_key(v, &pk).ok(),
+            None => None,
+        };
+        if current.as_deref() == Some(key.as_slice()) {
             out.push(row);
         }
     }
@@ -454,6 +501,7 @@ pub(crate) fn update_row_in<W: StorageWriteTx>(
     let mut new_values = old_values.clone();
     mutate(&mut new_values);
     new_values.remove(schema.primary_key);
+    validate_row(schema, pk, &new_values)?;
 
     let old_row = Row {
         pk: pk.clone(),

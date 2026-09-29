@@ -3,7 +3,6 @@
 //! amplification" problem (a missing key would otherwise require checking
 //! every on-disk generation) — a filter miss skips the file entirely with
 //! zero data I/O.
-use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilter {
@@ -30,19 +29,22 @@ impl BloomFilter {
         }
     }
 
-    /// Double hashing (Kirsch–Mitzenmacher): one SipHash pass produces two
-    /// independent-enough base hashes (the key alone, and the key salted
-    /// with a fixed constant), and probe `i` combines them as
-    /// `h1 + i*h2 (mod m)` instead of running `k` separate hash functions.
+    /// Double hashing (Kirsch–Mitzenmacher): two independent-enough base
+    /// hashes (the key alone, and the key salted with a fixed constant),
+    /// and probe `i` combines them as `h1 + i*h2 (mod m)` instead of running
+    /// `k` separate hash functions.
+    ///
+    /// Filters are persisted inside SSTables, so this hash must never change.
+    /// It reproduces, byte for byte, what `std`'s `DefaultHasher::new()`
+    /// (SipHash-1-3, zero keys) produced for `key.hash(..)` on 64-bit
+    /// little-endian targets when the format was created, but is frozen
+    /// here instead of depending on `std`, whose algorithm is explicitly
+    /// unspecified and may change between Rust releases.
     fn base_hashes(key: &[u8]) -> (u64, u64) {
-        let mut h1 = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut h1);
-        let a = h1.finish();
-
-        let mut h2 = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut h2);
-        0x9E3779B97F4A7C15u64.hash(&mut h2);
-        let b = h2.finish();
+        // `<[u8] as Hash>::hash` writes a usize length prefix before the bytes.
+        let len_prefix = (key.len() as u64).to_le_bytes();
+        let a = sip13(&[&len_prefix, key]);
+        let b = sip13(&[&len_prefix, key, &0x9E3779B97F4A7C15u64.to_le_bytes()]);
         (a, b)
     }
 
@@ -67,9 +69,79 @@ impl BloomFilter {
     }
 }
 
+/// SipHash-1-3 with keys `(0, 0)` over the concatenation of `parts`.
+fn sip13(parts: &[&[u8]]) -> u64 {
+    #[inline]
+    fn round(v: &mut [u64; 4]) {
+        v[0] = v[0].wrapping_add(v[1]);
+        v[1] = v[1].rotate_left(13) ^ v[0];
+        v[0] = v[0].rotate_left(32);
+        v[2] = v[2].wrapping_add(v[3]);
+        v[3] = v[3].rotate_left(16) ^ v[2];
+        v[0] = v[0].wrapping_add(v[3]);
+        v[3] = v[3].rotate_left(21) ^ v[0];
+        v[2] = v[2].wrapping_add(v[1]);
+        v[1] = v[1].rotate_left(17) ^ v[2];
+        v[2] = v[2].rotate_left(32);
+    }
+    fn compress(v: &mut [u64; 4], m: u64) {
+        v[3] ^= m;
+        round(v);
+        v[0] ^= m;
+    }
+
+    let mut v = [
+        0x736f6d6570736575u64,
+        0x646f72616e646f6du64,
+        0x6c7967656e657261u64,
+        0x7465646279746573u64,
+    ];
+    let mut buf = [0u8; 8];
+    let mut buf_len = 0usize;
+    let mut total = 0u64;
+    for part in parts {
+        for &byte in *part {
+            buf[buf_len] = byte;
+            buf_len += 1;
+            if buf_len == 8 {
+                compress(&mut v, u64::from_le_bytes(buf));
+                buf_len = 0;
+            }
+        }
+        total += part.len() as u64;
+    }
+    let mut last = (total & 0xff) << 56;
+    for (i, &byte) in buf[..buf_len].iter().enumerate() {
+        last |= (byte as u64) << (8 * i);
+    }
+    compress(&mut v, last);
+    v[2] ^= 0xff;
+    for _ in 0..3 {
+        round(&mut v);
+    }
+    v[0] ^ v[1] ^ v[2] ^ v[3]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Existing `.bkndb` files were written with `DefaultHasher`; the frozen
+    /// implementation must agree with it or their filters would report
+    /// present keys as absent.
+    #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+    #[test]
+    fn frozen_hash_matches_the_std_hasher_existing_files_were_written_with() {
+        use std::hash::{Hash, Hasher};
+        for key in [&b""[..], b"a", b"1234567", b"12345678", b"some-longer-key-spanning-several-words"] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h1);
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h2);
+            0x9E3779B97F4A7C15u64.hash(&mut h2);
+            assert_eq!(BloomFilter::base_hashes(key), (h1.finish(), h2.finish()), "key {key:?}");
+        }
+    }
 
     #[test]
     fn no_false_negatives() {

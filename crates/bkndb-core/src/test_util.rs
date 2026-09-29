@@ -1530,3 +1530,90 @@ pub fn batch_sync_bulk_conformance_suite<B: StorageBackend>(backend: B) {
     let found = sym_table.select_prefix("name", "ghost_symbol").unwrap();
     assert_eq!(found.len(), 0);
 }
+
+/// Primary-key uniqueness, upsert/index consistency, and column-kind
+/// validation — regressions for overwrites that used to leave stale index
+/// entries behind and for writes that silently accepted any value.
+pub fn relational_integrity_suite<B: StorageBackend>(backend: B) {
+    use crate::relational::{ColumnDef, ColumnKind, RelSchema, RelationalDb};
+    use crate::value::{PropValue, Properties};
+    use crate::BknError;
+
+    static PEOPLE: RelSchema = RelSchema {
+        name: "people",
+        columns: &[
+            ColumnDef { name: "id", kind: ColumnKind::Int },
+            ColumnDef { name: "city", kind: ColumnKind::Str },
+            ColumnDef { name: "age", kind: ColumnKind::Int },
+        ],
+        primary_key: "id",
+        auto_increment_pk: false,
+        indexed_columns: &["city"],
+    };
+
+    fn row(city: &str, age: i64) -> Properties {
+        let mut p = Properties::new();
+        p.insert("city".to_string(), PropValue::Str(city.to_string()));
+        p.insert("age".to_string(), PropValue::Int(age));
+        p
+    }
+
+    let db = RelationalDb::new(backend);
+    let t = db.table(&PEOPLE);
+
+    // Duplicate PK on plain insert is rejected and leaves the row untouched.
+    t.insert_with_pk(PropValue::Int(1), row("Jakarta", 30)).unwrap();
+    assert!(matches!(
+        t.insert_with_pk(PropValue::Int(1), row("Bandung", 99)),
+        Err(BknError::DuplicateKey { table: "people", .. })
+    ));
+    assert_eq!(t.get(&PropValue::Int(1)).unwrap().unwrap().values, row("Jakarta", 30));
+
+    // Duplicates inside one bulk insert are caught too, and roll the whole
+    // batch back.
+    let bulk = vec![(PropValue::Int(2), row("Medan", 1)), (PropValue::Int(2), row("Medan", 2))];
+    assert!(matches!(t.insert_with_pk_bulk(bulk), Err(BknError::DuplicateKey { .. })));
+    assert!(t.get(&PropValue::Int(2)).unwrap().is_none());
+
+    // Upsert replaces the row and moves its index entry.
+    t.upsert_with_pk(PropValue::Int(1), row("Bandung", 31)).unwrap();
+    assert!(t.select().where_eq("city", PropValue::Str("Jakarta".into())).run().unwrap().is_empty());
+    let hits = t.select().where_eq("city", PropValue::Str("Bandung".into())).run().unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].pk, PropValue::Int(1));
+    db.write_tx(|tx| {
+        let tbl = tx.table(&PEOPLE);
+        assert!(tbl.select_eq("city", &PropValue::Str("Jakarta".into()))?.is_empty());
+        assert_eq!(tbl.select_eq("city", &PropValue::Str("Bandung".into()))?.len(), 1);
+        Ok(())
+    })
+    .unwrap();
+
+    // Column-kind validation.
+    let mut wrong_kind = row("Surabaya", 0);
+    wrong_kind.insert("age".to_string(), PropValue::Str("old".into()));
+    assert!(matches!(
+        t.insert_with_pk(PropValue::Int(3), wrong_kind),
+        Err(BknError::SchemaMismatch { table: "people", .. })
+    ));
+    let mut undeclared = row("Surabaya", 0);
+    undeclared.insert("nickname".to_string(), PropValue::Str("x".into()));
+    assert!(matches!(t.insert_with_pk(PropValue::Int(3), undeclared), Err(BknError::SchemaMismatch { .. })));
+    assert!(matches!(t.insert_with_pk(PropValue::Str("3".into()), row("Surabaya", 0)), Err(BknError::SchemaMismatch { .. })));
+    // Null is accepted in any non-pk column.
+    let mut with_null = row("Surabaya", 0);
+    with_null.insert("age".to_string(), PropValue::Null);
+    t.insert_with_pk(PropValue::Int(3), with_null).unwrap();
+
+    // Updates are validated as well, and a rejected update changes nothing.
+    assert!(matches!(
+        t.update().where_eq("city", PropValue::Str("Bandung".into())).set("age", PropValue::Bool(true)).run(),
+        Err(BknError::SchemaMismatch { .. })
+    ));
+    assert_eq!(t.get(&PropValue::Int(1)).unwrap().unwrap().values, row("Bandung", 31));
+
+    // Predicate update/delete still work end to end.
+    assert_eq!(t.update().where_eq("city", PropValue::Str("Bandung".into())).set("age", PropValue::Int(32)).run().unwrap(), 1);
+    assert_eq!(t.delete().where_eq("city", PropValue::Str("Surabaya".into())).run().unwrap(), 1);
+    assert!(t.get(&PropValue::Int(3)).unwrap().is_none());
+}

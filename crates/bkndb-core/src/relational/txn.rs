@@ -3,7 +3,7 @@ use std::ops::Bound;
 use crate::relational::codec::next_pk;
 use crate::relational::db::{
     delete_row_in, get_in, index_lookup_eq_in, index_lookup_prefix_in, index_lookup_range_in,
-    insert_bulk_in, insert_with_pk_bulk_in, scan_all_in, update_row_in, write_row_in, Row,
+    insert_bulk_in, insert_with_pk_bulk_in, scan_all_in, update_row_in, write_row_in, OnConflict, Row,
 };
 use crate::relational::schema::RelSchema;
 use crate::value::{PropValue, Properties};
@@ -65,7 +65,7 @@ impl<'s, W: StorageWriteTx> BatchTable<'s, W> {
                 .cloned()
                 .ok_or_else(|| BknError::Encoding(format!("missing primary key column '{col}'")))?
         };
-        write_row_in(self.wtx, self.schema, &pk, &values)?;
+        write_row_in(self.wtx, self.schema, &pk, &values, OnConflict::Error)?;
         Ok(pk)
     }
 
@@ -82,8 +82,13 @@ impl<'s, W: StorageWriteTx> BatchTable<'s, W> {
                 "insert_with_pk cannot be used on an auto-increment schema".to_string(),
             ));
         }
-        write_row_in(self.wtx, self.schema, &pk, &values)?;
+        write_row_in(self.wtx, self.schema, &pk, &values, OnConflict::Error)?;
         Ok(())
+    }
+
+    /// See [`crate::relational::RelTable::upsert_with_pk`].
+    pub fn upsert_with_pk(&mut self, pk: PropValue, values: Properties) -> Result<(), BknError> {
+        write_row_in(self.wtx, self.schema, &pk, &values, OnConflict::Replace)
     }
 
     /// Inserts multiple rows with caller-supplied PKs in a single batch.

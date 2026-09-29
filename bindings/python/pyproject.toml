@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bkndb"
+version = "0.1.0"
+description = "Embedded hybrid graph + relational database engine — single-file, in-process, ACID."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Bkn Org" }]
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/BknOrg/bkn-db"
+Repository = "https://github.com/BknOrg/bkn-db"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["bkndb", "bkndb._native"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+# The compiled native library is platform-specific and named at build time
+# (`bkndb_ffi.dll` / `libbkndb_ffi.so` / `libbkndb_ffi.dylib`) by
+# scripts/build_native.py — only one of these exists per built wheel.
+"bkndb._native" = ["*.dll", "*.so", "*.dylib", "py.typed"]
+"bkndb" = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

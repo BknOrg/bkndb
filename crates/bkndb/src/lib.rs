@@ -80,7 +80,7 @@ impl BknDb {
 
     /// Ingests a structured batch of graph nodes, edges, and relational rows
     /// in a single atomic transaction using optimized bulk primitives.
-    #[cfg(feature = "graph")]
+    #[cfg(all(feature = "graph", feature = "relational-layer"))]
     pub fn sync_batch<'a>(&self, batch: SyncBatch<'a>) -> Result<SyncBatchResult, BknError> {
         self.inner.sync_batch(batch)
     }
@@ -139,7 +139,7 @@ impl BknDb {
         self.read_tx(|tx| tx.join_nodes_by_column(nodes, schema, foreign_key_col))
     }
 
-    #[cfg(feature = "graph")]
+    #[cfg(all(feature = "graph", feature = "relational-layer"))]
     pub fn sync_batch<'a>(&self, batch: SyncBatch<'a>) -> Result<SyncBatchResult, BknError> {
         self.inner.sync_batch(batch)
     }

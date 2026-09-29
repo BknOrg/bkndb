@@ -61,3 +61,46 @@ fn compaction_preserves_the_live_key_set_and_collapses_files() {
         assert_eq!(after.get(i.to_be_bytes().as_slice()), Some(&b"overwritten".to_vec()));
     }
 }
+
+/// Regression: `force_compact` used to rebuild the file from SSTables only,
+/// dropping everything still sitting in the memtable/WAL.
+#[test]
+fn force_compact_keeps_unflushed_commits_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.bkndb");
+    let options = LsmOptions {
+        memtable_flush_bytes: 512,
+        compaction_trigger_files: 1000,
+        sparse_index_interval: 2,
+    };
+    {
+        let backend = LsmStorageBackend::open_with_options(&path, options.clone()).unwrap();
+        // Each of these alone exceeds the flush threshold, so each becomes
+        // its own SSTable generation (compaction needs at least two).
+        for i in 0u32..4 {
+            let mut w = backend.begin_write().unwrap();
+            w.put(T, &i.to_be_bytes(), &[b'v'; 1024]).unwrap();
+            w.commit().unwrap();
+        }
+        assert!(backend.sstable_count() >= 2);
+        // A small final commit that stays below the flush threshold, so it
+        // lives only in the memtable + WAL when compaction starts.
+        let mut w = backend.begin_write().unwrap();
+        w.put(T, b"tail", b"x").unwrap();
+        w.commit().unwrap();
+
+        backend.force_compact().unwrap();
+        // Still visible, still writable after compaction.
+        let mut w = backend.begin_write().unwrap();
+        w.put(T, b"post-compact", b"y").unwrap();
+        w.commit().unwrap();
+    }
+
+    let reopened = LsmStorageBackend::open_with_options(&path, options).unwrap();
+    let all = full_scan(&reopened);
+    assert_eq!(all.get(b"tail".as_slice()), Some(&b"x".to_vec()));
+    assert_eq!(all.get(b"post-compact".as_slice()), Some(&b"y".to_vec()));
+    for i in 0u32..4 {
+        assert!(all.contains_key(i.to_be_bytes().as_slice()), "key {i} lost");
+    }
+}

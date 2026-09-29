@@ -77,3 +77,51 @@ fn corrupted_trailing_wal_frame_is_recovered_around() {
     let r = reopened.begin_read().unwrap();
     assert_eq!(r.get(T, b"good").unwrap(), Some(b"1".to_vec()));
 }
+
+/// Regression: recovery used to leave the torn frame in place, so the next
+/// commit was appended *after* the garbage and silently vanished on the
+/// following reopen (replay stops at the first bad frame).
+#[test]
+fn commits_after_recovering_a_torn_wal_tail_survive_a_second_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    {
+        let backend = LsmStorageBackend::open(&path).unwrap();
+        let mut w = backend.begin_write().unwrap();
+        w.put(T, b"before", b"1").unwrap();
+        w.commit().unwrap();
+    }
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(&9999u32.to_be_bytes()).unwrap();
+        f.write_all(&0u32.to_be_bytes()).unwrap();
+        f.write_all(b"torn").unwrap();
+    }
+    {
+        let backend = LsmStorageBackend::open(&path).unwrap();
+        let mut w = backend.begin_write().unwrap();
+        w.put(T, b"after", b"2").unwrap();
+        w.commit().unwrap();
+    }
+
+    let reopened = LsmStorageBackend::open(&path).unwrap();
+    let r = reopened.begin_read().unwrap();
+    assert_eq!(r.get(T, b"before").unwrap(), Some(b"1".to_vec()));
+    assert_eq!(r.get(T, b"after").unwrap(), Some(b"2".to_vec()));
+}
+
+#[test]
+fn opening_the_same_file_twice_is_rejected_while_the_first_is_alive() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let first = LsmStorageBackend::open(&path).unwrap();
+    match LsmStorageBackend::open(&path) {
+        Err(bkndb_core::BknError::DatabaseLocked(_)) => {}
+        Err(e) => panic!("expected DatabaseLocked, got {e}"),
+        Ok(_) => panic!("second open of a live database must fail"),
+    }
+    drop(first);
+    LsmStorageBackend::open(&path).expect("lock must be released once the first backend is dropped");
+}

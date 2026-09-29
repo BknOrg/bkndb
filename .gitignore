@@ -8,3 +8,7 @@
 *.pdb
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+bindings/python/build/
+bindings/python/dist/

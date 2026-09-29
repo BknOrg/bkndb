@@ -1581,6 +1581,12 @@ enum FfiBknError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case ReservedTableName(table: String
     )
+    case DatabaseLocked(path: String
+    )
+    case DuplicateKey(table: String, key: String
+    )
+    case SchemaMismatch(table: String, message: String
+    )
 
     
 
@@ -1623,6 +1629,17 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
         case 5: return .ReservedTableName(
             table: try FfiConverterString.read(from: &buf)
             )
+        case 6: return .DatabaseLocked(
+            path: try FfiConverterString.read(from: &buf)
+            )
+        case 7: return .DuplicateKey(
+            table: try FfiConverterString.read(from: &buf), 
+            key: try FfiConverterString.read(from: &buf)
+            )
+        case 8: return .SchemaMismatch(
+            table: try FfiConverterString.read(from: &buf), 
+            message: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1657,6 +1674,23 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
         case let .ReservedTableName(table):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(table, into: &buf)
+            
+        
+        case let .DatabaseLocked(path):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .DuplicateKey(table,key):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(table, into: &buf)
+            FfiConverterString.write(key, into: &buf)
+            
+        
+        case let .SchemaMismatch(table,message):
+            writeInt(&buf, Int32(8))
+            FfiConverterString.write(table, into: &buf)
+            FfiConverterString.write(message, into: &buf)
             
         }
     }
