@@ -126,14 +126,70 @@ pub struct FfiHubRecord {
     pub degree: u64,
 }
 
+impl From<bkndb_core::graph::PathResult> for FfiPathResult {
+    fn from(p: bkndb_core::graph::PathResult) -> Self {
+        FfiPathResult {
+            node_ids: p.nodes().into_iter().map(|n| n.0).collect(),
+            edge_ids: p.edges().into_iter().map(|e| e.0).collect(),
+            steps: p
+                .steps
+                .into_iter()
+                .map(|s| FfiPathStep {
+                    node_id: s.node.0,
+                    via_edge_id: s.via_edge.map(|e| e.0),
+                    edge_type: s.edge_type,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Rows to upsert into one registered table as part of a sync batch.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiTableRows {
+    pub table: String,
+    pub rows: Vec<HashMap<String, FfiPropValue>>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
 pub struct FfiSyncBatch {
     pub nodes: Vec<FfiNodeInput>,
     pub edges: Vec<FfiEdgeInput>,
+    /// Relational rows, upserted by primary key (so a batch can be re-applied).
+    #[uniffi(default)]
+    pub rows: Vec<FfiTableRows>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FfiSyncResult {
     pub node_ids: Vec<u64>,
     pub edge_ids: Vec<u64>,
+    /// Primary keys of `FfiSyncBatch::rows`, one list per table entry.
+    pub row_pks: Vec<Vec<FfiPropValue>>,
+}
+
+/// A neighbor together with the type of the edge leading to it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiTypedNeighbor {
+    pub node_id: u64,
+    pub edge_id: u64,
+    pub edge_type: String,
+}
+
+/// One node reached by a breadth-first traversal.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiTraversalHit {
+    pub node_id: u64,
+    pub depth: u32,
+    pub via_edge_id: Option<u64>,
+    pub parent_id: Option<u64>,
+}
+
+/// Tuning knobs for the on-disk (LSM) engine.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiLsmOptions {
+    /// Flush the in-memory write buffer to disk once it reaches this size.
+    pub memtable_flush_bytes: u64,
+    /// Compact automatically once this many on-disk segments exist.
+    pub compaction_trigger_files: u32,
 }

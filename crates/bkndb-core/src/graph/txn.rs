@@ -86,6 +86,16 @@ impl<'s, W: StorageWriteTx> BatchGraph<'s, W> {
         delete_node_in(self.wtx, id)
     }
 
+    /// See [`crate::graph::GraphDb::update_node_properties`].
+    pub fn update_node_properties(&mut self, id: NodeId, mutate: impl FnOnce(&mut Properties)) -> Result<(), BknError> {
+        crate::graph::db::update_node_properties_in(self.wtx, id, mutate)
+    }
+
+    /// See [`crate::graph::GraphDb::delete_edge`].
+    pub fn delete_edge(&mut self, edge: EdgeId) -> Result<bool, BknError> {
+        crate::graph::db::delete_edge_in(self.wtx, edge)
+    }
+
     /// See [`crate::graph::GraphDb::update_edge_properties`].
     pub fn update_edge_properties(
         &mut self,

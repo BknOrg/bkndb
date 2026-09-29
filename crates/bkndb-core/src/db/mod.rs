@@ -40,6 +40,21 @@ impl<B: StorageBackend> Db<B> {
 
     /// Raw KV access, validated against [`crate::RESERVED_TABLE_NAMES`].
     /// Always available — needs neither the "graph" nor "relational" feature.
+    /// The storage backend this database runs on (e.g. for backend-specific
+    /// maintenance such as compaction).
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
+    /// Opens an explicit write transaction spanning every model. Nothing is
+    /// durable until [`DbWriteBatch::commit`]; dropping the batch rolls it
+    /// back. Only one write transaction can be open at a time — the next
+    /// `begin_write` (or any other write) waits until this one ends.
+    /// Prefer [`Db::write_tx`] when the whole transaction fits in a closure.
+    pub fn begin_write(&self) -> Result<DbWriteBatch<B::WriteTx<'_>>, crate::BknError> {
+        Ok(DbWriteBatch::new(self.backend.begin_write()?))
+    }
+
     pub fn kv(&self) -> Kv<B> {
         Kv::from_arc(self.backend.clone())
     }

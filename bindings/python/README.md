@@ -1,126 +1,129 @@
 # bkndb — Python bindings
 
-Embedded hybrid graph + relational database engine for Python (via UniFFI).
-
-## Fitur Utama untuk Python & AI/ML
-
-1. **Embedded / In-Process:** Berjalan langsung di dalam proses Python Anda (seperti SQLite). Tanpa server terpisah, tanpa Docker, tanpa daemon background.
-2. **GraphRAG & Knowledge Retrieval:** Traversal relasi multi-hop (BFS Shortest Path, Top Hubs Centrality) untuk memperkaya prompt LLM.
-3. **High Throughput Bulk Ingest:** Batch atomik untuk node/edge dalam jumlah besar ke format single-file `.bkndb`.
-4. **Single-file Database (`.bkndb`):** Mudah didistribusikan bersama model AI atau workspace data.
-5. **Cross-platform:** satu wheel per OS/arsitektur (Windows, Linux, macOS × x86_64/arm64), berlaku untuk semua versi Python 3.9+ — lihat [Arsitektur](#arsitektur--kenapa-cross-platform-tanpa-matriks-cpxx) di bawah.
+Database embedded hybrid **graph + relational** untuk Python: satu file `.bkndb`, berjalan di dalam proses (seperti SQLite), transaksi ACID yang mencakup graph dan tabel sekaligus.
 
 ## Instalasi
 
 ```bash
-pip install bkndb
+pip install bkndb                     # wheel siap pakai untuk Windows/Linux/macOS
+pip install "bkndb[pandas,networkx]"  # + integrasi pandas & NetworkX
 ```
 
-## Struktur Paket
+Butuh Python 3.10+. Satu wheel per OS/arsitektur berlaku untuk semua versi Python 3.x (lihat [Arsitektur](#arsitektur)).
 
-```
-bindings/python/
-├── pyproject.toml          # metadata paket + build backend (setuptools)
-├── setup.py                # hanya untuk memaksa wheel tag platform-specific
-├── bkndb/                  # API publik — HANYA di sini yang boleh di-import
-│   ├── __init__.py
-│   ├── database.py         # class Database, wrapper Pythonic atas BknDbEngine
-│   ├── errors.py           # BknDbError & subclass-nya
-│   ├── types.py            # Node/Edge/Path/... dataclass + konversi PropValue
-│   ├── py.typed
-│   └── _native/             # PRIVAT — hasil generate uniffi, jangan diimpor langsung
-│       ├── bkndb_ffi.py
-│       └── bkndb_ffi.dll / libbkndb_ffi.so / libbkndb_ffi.dylib
-├── scripts/
-│   └── build_native.py     # build ulang crate Rust + regenerate _native/
-├── tests/
-│   └── test_database.py
-└── examples/
-    └── basic_usage.py
-```
-
-## Contoh Penggunaan Cepat
+## Contoh cepat
 
 ```python
 import bkndb
+from bkndb import Agg, Column, TableSchema, col
 
-with bkndb.open("my_knowledge.bkndb") as db:
-    # atau: with bkndb.in_memory() as db:
-    n1 = db.create_node("Prompt", {"text": "Analisis codebase"})
-    n2 = db.create_node("Tool", {"name": "Linter"})
-    db.create_edge(n1, "USES", n2)
+with bkndb.open("knowledge.bkndb") as db:        # atau bkndb.in_memory()
+    # --- Graph ---
+    doc = db.create_node("Document", {"title": "Attention Is All You Need"})
+    topic = db.create_node("Concept", {"name": "Transformer"})
+    db.create_edge(doc, "DISCUSSES", topic)
 
-    for neighbor in db.neighbors_out(n1, "USES"):
-        target = db.get_node(neighbor.node_id)
-        print("Connected to:", target.label, target.properties)
+    # --- Tabel relational (skema tersimpan di dalam database) ---
+    db.create_table(TableSchema(
+        "chunks",
+        [
+            Column("id", int),
+            Column("doc", int, nullable=False),           # NOT NULL
+            Column("text", str),
+            Column("tokens", int, default=0),             # DEFAULT
+        ],
+        primary_key="id",
+        auto_increment=True,
+        indexes=["doc"],
+    ))
+
+    # --- Transaksi atomik lintas graph + tabel ---
+    with db.transaction() as tx:
+        tx.insert("chunks", {"doc": doc, "text": "…", "tokens": 512})
+        tx.update_node(doc, set={"chunked": True})
+    # commit otomatis di sini; rollback kalau blok melempar exception
+
+    # --- Query ---
+    chunks = db.table("chunks")
+    big = chunks.select((col("doc") == doc) & (col("tokens") > 100), order_by="-tokens", limit=10)
+    [stats] = db.aggregate("chunks", [Agg.count(), Agg.avg("tokens")])
+    per_doc = db.aggregate("chunks", [Agg.sum("tokens")], group_by=["doc"])
+
+    # --- Traversal graph ---
+    for hit in db.traverse(doc, max_depth=2):
+        print(hit.depth, db.get_node(hit.node_id).label)
 ```
 
-Properti node/edge cukup pakai tipe Python biasa (`str`/`int`/`float`/`bool`/`bytes`/`None`) — tidak perlu `FfiPropValue.STR(...)` manual; konversi ke/dari tipe internal ditangani `bkndb.types`.
+Nilai properti/kolom cukup tipe Python biasa: `str`, `int`, `float`, `bool`, `bytes`, `None`.
 
-Error dari sisi Rust muncul sebagai exception Python asli: `bkndb.NotFoundError`, `bkndb.BackendError`, `bkndb.TableNotFoundError`, `bkndb.EncodingError`, `bkndb.ReservedTableNameError` — semuanya turunan `bkndb.BknDbError`.
+## Ringkasan API
+
+**Database** — `bkndb.open(path, *, memtable_flush_bytes=None, compaction_trigger_files=None)`, `bkndb.in_memory()`, `db.close()` (melepas file lock segera), `db.closed`, `db.compact()`.
+
+**Graph** — `create_node`, `create_nodes_bulk`, `get_node`, `update_node(id, set=..., unset=[...])`, `delete_node`, `create_edge`, `create_edges_bulk`, `get_edge`, `update_edge`, `delete_edge`, `neighbors(id, Direction.BOTH, edge_type=None)`, `degree`, `traverse(start, direction, max_depth, edge_types, node_label)`, `find_shortest_path`, `top_hubs`, `cascade_delete`.
+
+**Tabel** — `create_table(TableSchema)`, `ensure_table(TableSchema)` (migrasi: kolom baru dengan default di-backfill, kolom dihapus dibuang, constraint divalidasi terhadap data lama — atomik), `drop_table`, `create_index`/`drop_index`, `list_tables`, `table_schema`.
+
+**Baris** — `insert`/`insert_many` (error `DuplicateKeyError` kalau PK sudah ada), `upsert`/`upsert_many`, `get_row`, `select(table, where, order_by=, limit=, offset=, columns=)`, `count`, `update_rows(table, set, where)`, `delete_rows(table, where)`, `aggregate(table, [Agg...], where, group_by)`. `db.table("x")` memberi handle dengan method yang sama tanpa mengulang nama tabel.
+
+**Filter** — `col("a") == 1`, `!=`, `<`, `<=`, `>`, `>=`, `.is_in([...])`, `.is_null()`, `.is_not_null()`, `.startswith("pre")`, `.between(lo, hi)`, digabung dengan `&`, `|`, `~` (beri kurung pada tiap perbandingan). `where` juga boleh dict: `{"city": "Jakarta"}`. `order_by="-age"` berarti descending. Query memakai primary key atau index secara otomatis bila memungkinkan.
+
+**Transaksi** — `with db.transaction() as tx:` memberi semua operasi graph/baris di atas. Di dalam transaksi, pembacaan melihat tulisan transaksi itu sendiri. Kalau satu operasi gagal, transaksi dibatalkan (`TransactionAbortedError`) dan harus di-rollback. Hanya satu transaksi terbuka per database; selama terbuka, menulis lewat `db` langsung akan melempar `TransactionInProgressError` (pembacaan tetap jalan).
+
+**Bulk sync** — `db.sync_batch(nodes=[...], edges=[...], rows={"tabel": [...]})` dalam satu transaksi; baris di-*upsert*, jadi batch yang sama aman dijalankan ulang.
+
+**Integrasi** — `db.select_df(table, where, ...)` → `pandas.DataFrame` (index = primary key); `db.to_networkx(start, max_depth)` → `networkx.MultiDiGraph`.
+
+**Error** — semua turunan `bkndb.BknDbError`: `NotFoundError`, `TableNotFoundError`, `DuplicateKeyError`, `SchemaMismatchError`, `ConstraintViolationError`, `DatabaseLockedError`, `DatabaseClosedError`, `TransactionError` (`…InProgressError`, `…ClosedError`, `…AbortedError`), `InvalidArgumentError` (juga turunan `ValueError`, mis. integer di luar rentang 64-bit), `BackendError`, `EncodingError`, `ReservedTableNameError`.
 
 ## Development
 
 ```bash
-# 1. Build crate Rust + regenerate bkndb/_native/ untuk platform saat ini
-python scripts/build_native.py
-
-# 2. Install paket dalam mode editable + dependency test
-pip install -e ".[test]"
-
-# 3. Jalankan test
+cd bindings/python
+python -m venv .venv && . .venv/bin/activate    # Windows: .venv\Scripts\activate
+pip install maturin pytest
+maturin develop            # compile crate Rust + generate bkndb/_native/, install editable
 pytest
 ```
 
-### Build wheel asli & uji di venv bersih (sebelum publish)
+Ulangi `maturin develop` setiap kali kode Rust (`crates/`) berubah. Perubahan di file Python di `bkndb/` langsung berlaku tanpa build ulang.
 
-```bash
-python -m pip install build
-python -m build --wheel
-# harus menghasilkan bkndb-<versi>-py3-none-<platform>.whl (bukan cpXYZ-cpXYZ-...)
+Build distribusi lokal: `maturin build --release` (wheel `py3-none-<platform>`) dan `maturin sdist` (source, bisa di-`pip install` di mana saja yang punya toolchain Rust).
 
-python -m venv /tmp/wheel-check
-/tmp/wheel-check/bin/pip install dist/bkndb-*.whl   # Scripts\pip.exe di Windows
-/tmp/wheel-check/bin/python -c "import bkndb; db = bkndb.in_memory(); print(db.create_node('x', {}))"
+## Struktur paket
+
+```
+bindings/python/
+├── pyproject.toml     # metadata + konfigurasi maturin (bindings = "uniffi")
+├── bkndb/             # API publik — hanya dari sini yang boleh di-import
+│   ├── __init__.py
+│   ├── database.py    # Database, Transaction, Table
+│   ├── query.py       # col(), ekspresi filter, Agg
+│   ├── types.py       # Node/Edge/Row/TableSchema/... + konversi nilai
+│   ├── errors.py      # hierarki exception
+│   └── _native/       # PRIVAT, hasil generate maturin — jangan di-import/commit
+├── tests/
+└── examples/
 ```
 
-## Arsitektur — kenapa cross-platform tanpa matriks `cp3x`
+## Arsitektur
 
-Binding ini pakai gaya UniFFI "Python murni": `bkndb/_native/bkndb_ffi.py` memuat library native lewat `ctypes` saat runtime, bukan lewat ABI ekstensi C CPython (beda dengan PyO3). Konsekuensinya: **satu wheel per OS/arsitektur sudah cukup untuk semua versi Python 3.9+** — tidak perlu build matrix `cp39`/`cp310`/`cp311`/....
+Binding ini memakai UniFFI: `bkndb/_native/bkndb_ffi.py` memuat library native lewat `ctypes`, bukan lewat ABI ekstensi C CPython. Karena itu **satu wheel per OS/arsitektur berlaku untuk semua versi Python 3.x** (tag `py3-none-<platform>`), tanpa matriks `cp310`/`cp311`/…. maturin mengurus build crate Rust, generate binding (memakai `uniffi-bindgen` milik crate sendiri, jadi versinya selalu cocok) dan penandaan wheel, termasuk `manylinux` di Linux.
 
-`setup.py` di root paket ini memaksa wheel bertanda `py3-none-<platform>` (mis. `py3-none-win_amd64`) lewat dua override:
-1. `BinaryDistribution.has_ext_modules() -> True` — supaya `bdist_wheel` memilih tag platform (`win_amd64`, dst), bukan `any`.
-2. Override `bdist_wheel.get_tag()` — tanpa ini, `bdist_wheel` tetap menempelkan tag Python+ABI milik interpreter yang menjalankan build (mis. `cp312-cp312`), padahal tidak ada C extension yang benar-benar dikompilasi di sini (filenya sudah disiapkan lebih dulu oleh `scripts/build_native.py`). Override ini memaksa bagian python/abi jadi `py3`/`none`, menyisakan hanya tag platform.
+Transaksi eksplisit berjalan di thread native miliknya sendiri, sehingga objek transaksi aman dipakai dari thread Python mana pun.
 
-Sudah diverifikasi lokal: `python -m build --wheel` di Windows menghasilkan `bkndb-0.1.0-py3-none-win_amd64.whl`, dan wheel itu bisa `pip install` + `import bkndb` di venv bersih tanpa source tree sama sekali.
+## Rilis ke PyPI
 
-## Publish ke PyPI
+`.github/workflows/python-wheels.yml` menjalankan, di setiap PR yang menyentuh `crates/**` atau `bindings/python/**`:
+- **test** — install dari source + `pytest` di Linux/Windows/macOS × Python 3.10–3.13;
+- **wheels** — Linux x86_64/aarch64 (manylinux), Windows x64, macOS x86_64/arm64, plus **sdist**;
+- **smoke** — install tiap wheel di environment bersih.
 
-### 1. Build satu wheel per platform (perlu CI — tidak bisa dari satu mesin)
+Setup sekali: di PyPI tambahkan [trusted publisher](https://docs.pypi.org/trusted-publishers/) untuk repo `BknOrg/bkn-db`, workflow `python-wheels.yml`, environment `pypi`; lalu buat environment `pypi` di pengaturan repo GitHub.
 
-Rust dikompilasi native per OS/arsitektur, jadi wheel Linux/macOS **tidak bisa** dibuat dari Windows (atau sebaliknya). `.github/workflows/python-wheels.yml` sudah disiapkan: matrix 4 runner (`windows-latest`, `ubuntu-latest`, `macos-13` Intel, `macos-14` Apple Silicon), masing-masing menjalankan `scripts/build_native.py` → `python -m build --wheel` → smoke-test install di venv bersih → upload sebagai artifact.
+Rilis: naikkan `version` di `pyproject.toml`, lalu push tag `python-v<versi>` (mis. `python-v0.2.0`). Job `publish` hanya jalan setelah semua job di atas lulus, dan memeriksa bahwa tag cocok dengan versi paket.
 
-Trigger: otomatis di setiap PR yang menyentuh `bindings/python/**` atau `crates/bkndb-ffi/**` (build + smoke-test saja, tidak publish), atau manual lewat tab **Actions → Run workflow**.
+## Lapisan stabil vs. tidak
 
-### 2. Setup akun PyPI + Trusted Publishing (sekali saja, manual di web PyPI)
-
-Workflow publish-nya pakai [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC), **bukan** API token yang disimpan sebagai secret — lebih aman, tidak ada token yang bisa bocor. Langkah satu kali:
-
-1. Buat akun di [pypi.org](https://pypi.org) (dan [test.pypi.org](https://test.pypi.org) untuk uji coba dulu).
-2. Di halaman project PyPI (`https://pypi.org/manage/project/bkndb/settings/publishing/` — atau "pending publisher" kalau project belum pernah dipublish), tambahkan trusted publisher: repo `BknOrg/bkn-db`, workflow `python-wheels.yml`, environment `pypi`.
-3. Di GitHub repo settings → Environments, buat environment bernama `pypi` (boleh tambahkan required reviewer untuk approval manual sebelum publish jalan).
-
-### 3. Rilis
-
-```bash
-# Naikkan versi dulu di pyproject.toml — PyPI menolak upload ulang versi yang sama
-git tag python-v0.1.0
-git push origin python-v0.1.0
-```
-
-Push tag `python-v*` memicu job `publish` di workflow: menunggu keempat wheel selesai build+smoke-test, lalu upload semuanya ke PyPI sekaligus. Disarankan uji ke TestPyPI dulu (ubah target di workflow atau publish manual dengan `twine upload --repository testpypi dist/*`) sebelum tag rilis nyata.
-
-## Lapisan yang stabil vs. yang tidak
-
-- **Stabil (API publik):** `bkndb.Database`, `bkndb.open`/`bkndb.in_memory`, semua exception, semua dataclass di `bkndb.types`. Ini yang di-maintain tangan dan yang menyerap perubahan di sisi Rust.
-- **Tidak stabil (privat):** `bkndb._native.*` — berubah bentuk otomatis setiap `crates/bkndb-ffi` berubah. Jangan pernah import ini di kode aplikasi.
+- **Stabil (API publik):** semua yang diekspor dari `bkndb` — di-maintain tangan dan menyerap perubahan di sisi Rust.
+- **Privat:** `bkndb._native.*` — berubah otomatis mengikuti `crates/bkndb-ffi`. Jangan di-import di kode aplikasi.

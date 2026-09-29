@@ -18,6 +18,16 @@ pub enum FfiBknError {
     SchemaMismatch { table: String, message: String },
     #[error("Constraint violation in table '{table}': {message}")]
     ConstraintViolation { table: String, message: String },
+    #[error("The database has been closed")]
+    DatabaseClosed,
+    #[error("A transaction is open on this database; use it, or commit/roll it back first")]
+    TransactionInProgress,
+    #[error("The transaction has already been committed or rolled back")]
+    TransactionClosed,
+    #[error("An earlier operation in this transaction failed; roll it back: {message}")]
+    TransactionAborted { message: String },
+    #[error("Invalid argument: {message}")]
+    InvalidArgument { message: String },
 }
 
 impl From<bkndb_core::BknError> for FfiBknError {

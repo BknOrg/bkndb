@@ -55,6 +55,13 @@ impl BknDb {
         &self.inner
     }
 
+    /// Merges every on-disk SSTable into one and reclaims dead space
+    /// (overwritten/deleted data and old log regions). Blocks writers while
+    /// it runs; readers are unaffected.
+    pub fn compact(&self) -> Result<(), BknError> {
+        self.inner.backend().force_compact()
+    }
+
     /// Convenience helper for joining a list of graph node IDs with a relational table
     /// whose primary key is the node ID.
     #[cfg(all(feature = "graph", feature = "relational-layer"))]

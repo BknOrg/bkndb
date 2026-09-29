@@ -31,6 +31,11 @@ impl<W: StorageWriteTx> DbWriteBatch<W> {
         self.wtx
     }
 
+    /// Commits every write made through this batch atomically.
+    pub fn commit(self) -> Result<(), crate::BknError> {
+        self.wtx.commit()
+    }
+
     /// Raw KV access, validated against [`crate::RESERVED_TABLE_NAMES`],
     /// over this batch's shared transaction.
     pub fn kv(&mut self) -> BatchKv<'_, W> {

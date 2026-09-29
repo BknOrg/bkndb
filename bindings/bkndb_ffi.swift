@@ -618,14 +618,41 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
- * The main mobile entrypoint for BknDb, thread-safe and exported via UniFFI.
+ * The main entrypoint for BknDb, thread-safe and exported via UniFFI.
  */
 public protocol BknDbEngineProtocol: AnyObject, Sendable {
+    
+    /**
+     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
+     * `group_by`, returns exactly one row.
+     */
+    func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg]) throws  -> [FfiAggregateRow]
+    
+    /**
+     * Opens an explicit write transaction. Only one can be open at a time;
+     * while it is, writes through the engine itself fail with
+     * `TransactionInProgress` (reads keep working on the last committed state).
+     */
+    func beginTransaction() throws  -> BknDbTransaction
     
     /**
      * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
      */
     func cascadeDelete(root: UInt64, containmentEdge: String) throws  -> [UInt64]
+    
+    /**
+     * Closes the database, releasing its file lock. Every later call fails
+     * with `DatabaseClosed`. Idempotent; fails while a transaction is open.
+     */
+    func close() throws 
+    
+    /**
+     * Reclaims disk space from overwritten and deleted data (on-disk
+     * databases only; a no-op in memory).
+     */
+    func compact() throws 
+    
+    func count(table: String, query: FfiQuery) throws  -> UInt64
     
     /**
      * Creates a directed edge between two existing nodes.
@@ -638,6 +665,11 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func createEdgesBulk(edges: [FfiEdgeInput]) throws  -> [UInt64]
     
     /**
+     * Adds a (backfilled) secondary index.
+     */
+    func createIndex(table: String, column: String) throws 
+    
+    /**
      * Creates a single graph node with the given label and properties.
      */
     func createNode(label: String, properties: [String: FfiPropValue]) throws  -> UInt64
@@ -648,9 +680,43 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func createNodesBulk(nodes: [FfiNodeInput]) throws  -> [UInt64]
     
     /**
+     * Registers a table. Returns `false` if an identical definition already
+     * exists; fails if a different one does (use `ensure_table` to migrate).
+     */
+    func createTable(schema: FfiTableSchema) throws  -> Bool
+    
+    /**
+     * Number of edges at `node` in `direction` (optionally of one type).
+     */
+    func degree(node: UInt64, direction: FfiDirection, edgeType: String?) throws  -> UInt64
+    
+    /**
+     * Deletes one edge; returns whether it existed.
+     */
+    func deleteEdge(id: UInt64) throws  -> Bool
+    
+    /**
      * Deletes a node and all incident edges atomically.
      */
     func deleteNode(id: UInt64) throws 
+    
+    /**
+     * Deletes every row matching `query`; returns how many were removed.
+     */
+    func deleteRows(table: String, query: FfiQuery) throws  -> UInt64
+    
+    func dropIndex(table: String, column: String) throws 
+    
+    /**
+     * Deletes a table and all its rows; returns whether it existed.
+     */
+    func dropTable(name: String) throws  -> Bool
+    
+    /**
+     * Creates the table, or migrates the existing one to `schema` (columns,
+     * constraints and indexes; existing rows are backfilled/validated).
+     */
+    func ensureTable(schema: FfiTableSchema) throws 
     
     /**
      * Computes the unweighted shortest path between `start` and `target` using BFS.
@@ -667,6 +733,26 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func getNode(id: UInt64) throws  -> FfiNodeRecord?
     
+    func getRow(table: String, pk: FfiPropValue) throws  -> FfiRow?
+    
+    /**
+     * Inserts a row; returns its primary key (generated for auto-increment
+     * tables). Fails with `DuplicateKey` if the key is taken.
+     */
+    func insert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
+    
+    func insertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
+    
+    func isClosed()  -> Bool
+    
+    func listTables() throws  -> [FfiTableSchema]
+    
+    /**
+     * Neighbors of `node` in `direction`, over every edge type unless
+     * `edge_type` is given.
+     */
+    func neighbors(node: UInt64, direction: FfiDirection, edgeType: String?) throws  -> [FfiTypedNeighbor]
+    
     /**
      * Returns incoming neighbors for `node` along edges of type `edge_type`.
      */
@@ -677,19 +763,55 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func neighborsOut(node: UInt64, edgeType: String) throws  -> [FfiNeighbor]
     
+    func select(table: String, query: FfiQuery) throws  -> [FfiRow]
+    
     /**
-     * Ingests a structured batch of graph nodes and edges in a single atomic transaction.
+     * Ingests graph nodes, edges and relational rows (upserted by primary
+     * key) in a single atomic transaction.
      */
     func syncBatch(batch: FfiSyncBatch) throws  -> FfiSyncResult
     
+    func tableSchema(name: String) throws  -> FfiTableSchema?
+    
     /**
-     * Finds the top `k` hub nodes by degree centrality, optionally filtered by edge type.
+     * Finds the top `k` hub nodes by degree centrality, optionally filtered by node label.
      */
     func topHubs(k: UInt32, direction: FfiDirection, edgeType: String?) throws  -> [FfiHubRecord]
     
+    /**
+     * Breadth-first traversal from `start` up to `max_depth` hops. Returns
+     * `start` itself first (depth 0). `edge_types` restricts which edges are
+     * followed; `node_label` only visits (and expands) nodes with that label.
+     */
+    func traverse(start: UInt64, direction: FfiDirection, maxDepth: UInt32, edgeTypes: [String]?, nodeLabel: String?) throws  -> [FfiTraversalHit]
+    
+    /**
+     * See [`BknDbEngine::update_node_properties`].
+     */
+    func updateEdgeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String]) throws 
+    
+    /**
+     * Replaces/adds the properties in `set` and removes those named in
+     * `unset`, atomically. Fails with `NotFound` if the node doesn't exist.
+     */
+    func updateNodeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String]) throws 
+    
+    /**
+     * Sets the columns in `set` on every row matching `query`; returns how
+     * many rows changed.
+     */
+    func updateRows(table: String, query: FfiQuery, set: [String: FfiPropValue]) throws  -> UInt64
+    
+    /**
+     * Inserts a row or replaces the one with the same primary key.
+     */
+    func upsert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
+    
+    func upsertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
+    
 }
 /**
- * The main mobile entrypoint for BknDb, thread-safe and exported via UniFFI.
+ * The main entrypoint for BknDb, thread-safe and exported via UniFFI.
  */
 open class BknDbEngine: BknDbEngineProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -754,7 +876,8 @@ public static func inMemory()throws  -> BknDbEngine  {
 }
     
     /**
-     * Opens or creates an on-disk single-file database at `path`.
+     * Opens or creates an on-disk single-file database at `path`. Fails with
+     * `DatabaseLocked` if another handle or process has it open.
      */
 public static func `open`(path: String)throws  -> BknDbEngine  {
     return try  FfiConverterTypeBknDbEngine_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
@@ -765,7 +888,51 @@ public static func `open`(path: String)throws  -> BknDbEngine  {
 })
 }
     
+    /**
+     * Like [`BknDbEngine::open`], with tuning options for the storage engine.
+     */
+public static func openWithOptions(path: String, options: FfiLsmOptions)throws  -> BknDbEngine  {
+    return try  FfiConverterTypeBknDbEngine_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_constructor_bkndbengine_open_with_options(
+        FfiConverterString.lower(path),
+        FfiConverterTypeFfiLsmOptions_lower(options),uniffiCallStatus
+    )
+})
+}
+    
 
+    
+    /**
+     * `GROUP BY group_by` aggregates over the rows matching `query`. With no
+     * `group_by`, returns exactly one row.
+     */
+open func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg])throws  -> [FfiAggregateRow]  {
+    return try  FfiConverterSequenceTypeFfiAggregateRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),
+        FfiConverterSequenceString.lower(groupBy),
+        FfiConverterSequenceTypeFfiAgg.lower(aggregates),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Opens an explicit write transaction. Only one can be open at a time;
+     * while it is, writes through the engine itself fail with
+     * `TransactionInProgress` (reads keep working on the last committed state).
+     */
+open func beginTransaction()throws  -> BknDbTransaction  {
+    return try  FfiConverterTypeBknDbTransaction_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_begin_transaction(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
     
     /**
      * Recursively cascade-deletes `root` and all descendants reachable via `containment_edge`.
@@ -777,6 +944,41 @@ open func cascadeDelete(root: UInt64, containmentEdge: String)throws  -> [UInt64
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(root),
         FfiConverterString.lower(containmentEdge),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Closes the database, releasing its file lock. Every later call fails
+     * with `DatabaseClosed`. Idempotent; fails while a transaction is open.
+     */
+open func close()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_close(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Reclaims disk space from overwritten and deleted data (on-disk
+     * databases only; a no-op in memory).
+     */
+open func compact()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_compact(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func count(table: String, query: FfiQuery)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_count(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
     )
 })
 }
@@ -811,6 +1013,19 @@ open func createEdgesBulk(edges: [FfiEdgeInput])throws  -> [UInt64]  {
 }
     
     /**
+     * Adds a (backfilled) secondary index.
+     */
+open func createIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Creates a single graph node with the given label and properties.
      */
 open func createNode(label: String, properties: [String: FfiPropValue])throws  -> UInt64  {
@@ -838,6 +1053,48 @@ open func createNodesBulk(nodes: [FfiNodeInput])throws  -> [UInt64]  {
 }
     
     /**
+     * Registers a table. Returns `false` if an identical definition already
+     * exists; fails if a different one does (use `ensure_table` to migrate).
+     */
+open func createTable(schema: FfiTableSchema)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_table(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Number of edges at `node` in `direction` (optionally of one type).
+     */
+open func degree(node: UInt64, direction: FfiDirection, edgeType: String?)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_degree(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(node),
+        FfiConverterTypeFfiDirection_lower(direction),
+        FfiConverterOptionString.lower(edgeType),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Deletes one edge; returns whether it existed.
+     */
+open func deleteEdge(id: UInt64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_delete_edge(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Deletes a node and all incident edges atomically.
      */
 open func deleteNode(id: UInt64)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
@@ -845,6 +1102,56 @@ open func deleteNode(id: UInt64)throws   {try rustCallWithError(FfiConverterType
     uniffi_bkndb_ffi_fn_method_bkndbengine_delete_node(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Deletes every row matching `query`; returns how many were removed.
+     */
+open func deleteRows(table: String, query: FfiQuery)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+open func dropIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Deletes a table and all its rows; returns whether it existed.
+     */
+open func dropTable(name: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Creates the table, or migrates the existing one to `schema` (columns,
+     * constraints and indexes; existing rows are backfilled/validated).
+     */
+open func ensureTable(schema: FfiTableSchema)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
     )
 }
 }
@@ -891,6 +1198,77 @@ open func getNode(id: UInt64)throws  -> FfiNodeRecord?  {
 })
 }
     
+open func getRow(table: String, pk: FfiPropValue)throws  -> FfiRow?  {
+    return try  FfiConverterOptionTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiPropValue_lower(pk),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Inserts a row; returns its primary key (generated for auto-increment
+     * tables). Fails with `DuplicateKey` if the key is taken.
+     */
+open func insert(table: String, values: [String: FfiPropValue])throws  -> FfiPropValue  {
+    return try  FfiConverterTypeFfiPropValue_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_insert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(values),uniffiCallStatus
+    )
+})
+}
+    
+open func insertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [FfiPropValue]  {
+    return try  FfiConverterSequenceTypeFfiPropValue.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterSequenceDictionaryStringTypeFfiPropValue.lower(rows),uniffiCallStatus
+    )
+})
+}
+    
+open func isClosed() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func listTables()throws  -> [FfiTableSchema]  {
+    return try  FfiConverterSequenceTypeFfiTableSchema.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_list_tables(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Neighbors of `node` in `direction`, over every edge type unless
+     * `edge_type` is given.
+     */
+open func neighbors(node: UInt64, direction: FfiDirection, edgeType: String?)throws  -> [FfiTypedNeighbor]  {
+    return try  FfiConverterSequenceTypeFfiTypedNeighbor.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_neighbors(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(node),
+        FfiConverterTypeFfiDirection_lower(direction),
+        FfiConverterOptionString.lower(edgeType),uniffiCallStatus
+    )
+})
+}
+    
     /**
      * Returns incoming neighbors for `node` along edges of type `edge_type`.
      */
@@ -919,8 +1297,20 @@ open func neighborsOut(node: UInt64, edgeType: String)throws  -> [FfiNeighbor]  
 })
 }
     
+open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
+    return try  FfiConverterSequenceTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_select(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
     /**
-     * Ingests a structured batch of graph nodes and edges in a single atomic transaction.
+     * Ingests graph nodes, edges and relational rows (upserted by primary
+     * key) in a single atomic transaction.
      */
 open func syncBatch(batch: FfiSyncBatch)throws  -> FfiSyncResult  {
     return try  FfiConverterTypeFfiSyncResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
@@ -932,8 +1322,18 @@ open func syncBatch(batch: FfiSyncBatch)throws  -> FfiSyncResult  {
 })
 }
     
+open func tableSchema(name: String)throws  -> FfiTableSchema?  {
+    return try  FfiConverterOptionTypeFfiTableSchema.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_table_schema(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
     /**
-     * Finds the top `k` hub nodes by degree centrality, optionally filtered by edge type.
+     * Finds the top `k` hub nodes by degree centrality, optionally filtered by node label.
      */
 open func topHubs(k: UInt32, direction: FfiDirection, edgeType: String?)throws  -> [FfiHubRecord]  {
     return try  FfiConverterSequenceTypeFfiHubRecord.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
@@ -943,6 +1343,95 @@ open func topHubs(k: UInt32, direction: FfiDirection, edgeType: String?)throws  
         FfiConverterUInt32.lower(k),
         FfiConverterTypeFfiDirection_lower(direction),
         FfiConverterOptionString.lower(edgeType),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Breadth-first traversal from `start` up to `max_depth` hops. Returns
+     * `start` itself first (depth 0). `edge_types` restricts which edges are
+     * followed; `node_label` only visits (and expands) nodes with that label.
+     */
+open func traverse(start: UInt64, direction: FfiDirection, maxDepth: UInt32, edgeTypes: [String]?, nodeLabel: String?)throws  -> [FfiTraversalHit]  {
+    return try  FfiConverterSequenceTypeFfiTraversalHit.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_traverse(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(start),
+        FfiConverterTypeFfiDirection_lower(direction),
+        FfiConverterUInt32.lower(maxDepth),
+        FfiConverterOptionSequenceString.lower(edgeTypes),
+        FfiConverterOptionString.lower(nodeLabel),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * See [`BknDbEngine::update_node_properties`].
+     */
+open func updateEdgeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String])throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_update_edge_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(set),
+        FfiConverterSequenceString.lower(unset),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Replaces/adds the properties in `set` and removes those named in
+     * `unset`, atomically. Fails with `NotFound` if the node doesn't exist.
+     */
+open func updateNodeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String])throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_update_node_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(set),
+        FfiConverterSequenceString.lower(unset),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Sets the columns in `set` on every row matching `query`; returns how
+     * many rows changed.
+     */
+open func updateRows(table: String, query: FfiQuery, set: [String: FfiPropValue])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_update_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(set),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Inserts a row or replaces the one with the same primary key.
+     */
+open func upsert(table: String, values: [String: FfiPropValue])throws  -> FfiPropValue  {
+    return try  FfiConverterTypeFfiPropValue_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_upsert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(values),uniffiCallStatus
+    )
+})
+}
+    
+open func upsertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [FfiPropValue]  {
+    return try  FfiConverterSequenceTypeFfiPropValue.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_upsert_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterSequenceDictionaryStringTypeFfiPropValue.lower(rows),uniffiCallStatus
     )
 })
 }
@@ -993,6 +1482,641 @@ public func FfiConverterTypeBknDbEngine_lower(_ value: BknDbEngine) -> UInt64 {
 }
 
 
+
+
+
+
+/**
+ * An explicit write transaction. Every operation runs inside it and sees
+ * its earlier writes; nothing is visible to others or durable until
+ * [`BknDbTransaction::commit`]. If any operation fails, the transaction is
+ * aborted: later operations and `commit` fail, and it must be rolled back.
+ * Dropping an unfinished transaction rolls it back.
+ */
+public protocol BknDbTransactionProtocol: AnyObject, Sendable {
+    
+    /**
+     * Makes every write of this transaction durable and visible atomically.
+     */
+    func commit() throws 
+    
+    func count(table: String, query: FfiQuery) throws  -> UInt64
+    
+    func createEdge(from: UInt64, edgeType: String, to: UInt64, properties: [String: FfiPropValue]) throws  -> UInt64
+    
+    func createEdgesBulk(edges: [FfiEdgeInput]) throws  -> [UInt64]
+    
+    func createNode(label: String, properties: [String: FfiPropValue]) throws  -> UInt64
+    
+    func createNodesBulk(nodes: [FfiNodeInput]) throws  -> [UInt64]
+    
+    func createTable(schema: FfiTableSchema) throws  -> Bool
+    
+    func deleteEdge(id: UInt64) throws  -> Bool
+    
+    func deleteNode(id: UInt64) throws 
+    
+    func deleteRows(table: String, query: FfiQuery) throws  -> UInt64
+    
+    func dropTable(name: String) throws  -> Bool
+    
+    func ensureTable(schema: FfiTableSchema) throws 
+    
+    func getEdge(id: UInt64) throws  -> FfiEdgeRecord?
+    
+    func getNode(id: UInt64) throws  -> FfiNodeRecord?
+    
+    func getRow(table: String, pk: FfiPropValue) throws  -> FfiRow?
+    
+    func insert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
+    
+    func insertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
+    
+    /**
+     * Whether the transaction is still open (not committed or rolled back).
+     */
+    func isActive()  -> Bool
+    
+    func neighbors(node: UInt64, direction: FfiDirection, edgeType: String?) throws  -> [FfiTypedNeighbor]
+    
+    /**
+     * Discards every write of this transaction.
+     */
+    func rollback() throws 
+    
+    func select(table: String, query: FfiQuery) throws  -> [FfiRow]
+    
+    func updateEdgeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String]) throws 
+    
+    func updateNodeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String]) throws 
+    
+    func updateRows(table: String, query: FfiQuery, set: [String: FfiPropValue]) throws  -> UInt64
+    
+    func upsert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
+    
+    func upsertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
+    
+}
+/**
+ * An explicit write transaction. Every operation runs inside it and sees
+ * its earlier writes; nothing is visible to others or durable until
+ * [`BknDbTransaction::commit`]. If any operation fails, the transaction is
+ * aborted: later operations and `commit` fail, and it must be rolled back.
+ * Dropping an unfinished transaction rolls it back.
+ */
+open class BknDbTransaction: BknDbTransactionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_bkndb_ffi_fn_clone_bkndbtransaction(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_bkndb_ffi_fn_free_bkndbtransaction(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Makes every write of this transaction durable and visible atomically.
+     */
+open func commit()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_commit(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func count(table: String, query: FfiQuery)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_count(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+open func createEdge(from: UInt64, edgeType: String, to: UInt64, properties: [String: FfiPropValue])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_create_edge(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(from),
+        FfiConverterString.lower(edgeType),
+        FfiConverterUInt64.lower(to),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(properties),uniffiCallStatus
+    )
+})
+}
+    
+open func createEdgesBulk(edges: [FfiEdgeInput])throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_create_edges_bulk(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeFfiEdgeInput.lower(edges),uniffiCallStatus
+    )
+})
+}
+    
+open func createNode(label: String, properties: [String: FfiPropValue])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_create_node(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(properties),uniffiCallStatus
+    )
+})
+}
+    
+open func createNodesBulk(nodes: [FfiNodeInput])throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_create_nodes_bulk(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeFfiNodeInput.lower(nodes),uniffiCallStatus
+    )
+})
+}
+    
+open func createTable(schema: FfiTableSchema)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_create_table(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
+    )
+})
+}
+    
+open func deleteEdge(id: UInt64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_delete_edge(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+open func deleteNode(id: UInt64)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_delete_node(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+open func deleteRows(table: String, query: FfiQuery)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_delete_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+open func dropTable(name: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_drop_table(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
+open func ensureTable(schema: FfiTableSchema)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_ensure_table(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiTableSchema_lower(schema),uniffiCallStatus
+    )
+}
+}
+    
+open func getEdge(id: UInt64)throws  -> FfiEdgeRecord?  {
+    return try  FfiConverterOptionTypeFfiEdgeRecord.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_get_edge(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+open func getNode(id: UInt64)throws  -> FfiNodeRecord?  {
+    return try  FfiConverterOptionTypeFfiNodeRecord.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_get_node(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+open func getRow(table: String, pk: FfiPropValue)throws  -> FfiRow?  {
+    return try  FfiConverterOptionTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_get_row(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiPropValue_lower(pk),uniffiCallStatus
+    )
+})
+}
+    
+open func insert(table: String, values: [String: FfiPropValue])throws  -> FfiPropValue  {
+    return try  FfiConverterTypeFfiPropValue_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_insert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(values),uniffiCallStatus
+    )
+})
+}
+    
+open func insertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [FfiPropValue]  {
+    return try  FfiConverterSequenceTypeFfiPropValue.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_insert_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterSequenceDictionaryStringTypeFfiPropValue.lower(rows),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Whether the transaction is still open (not committed or rolled back).
+     */
+open func isActive() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_is_active(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func neighbors(node: UInt64, direction: FfiDirection, edgeType: String?)throws  -> [FfiTypedNeighbor]  {
+    return try  FfiConverterSequenceTypeFfiTypedNeighbor.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_neighbors(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(node),
+        FfiConverterTypeFfiDirection_lower(direction),
+        FfiConverterOptionString.lower(edgeType),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Discards every write of this transaction.
+     */
+open func rollback()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_rollback(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
+    return try  FfiConverterSequenceTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_select(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+open func updateEdgeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String])throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_update_edge_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(set),
+        FfiConverterSequenceString.lower(unset),uniffiCallStatus
+    )
+}
+}
+    
+open func updateNodeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String])throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_update_node_properties(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(set),
+        FfiConverterSequenceString.lower(unset),uniffiCallStatus
+    )
+}
+}
+    
+open func updateRows(table: String, query: FfiQuery, set: [String: FfiPropValue])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_update_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterTypeFfiQuery_lower(query),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(set),uniffiCallStatus
+    )
+})
+}
+    
+open func upsert(table: String, values: [String: FfiPropValue])throws  -> FfiPropValue  {
+    return try  FfiConverterTypeFfiPropValue_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_upsert(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterDictionaryStringTypeFfiPropValue.lower(values),uniffiCallStatus
+    )
+})
+}
+    
+open func upsertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [FfiPropValue]  {
+    return try  FfiConverterSequenceTypeFfiPropValue.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_upsert_many(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterSequenceDictionaryStringTypeFfiPropValue.lower(rows),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBknDbTransaction: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = BknDbTransaction
+
+    public static func lift(_ handle: UInt64) throws -> BknDbTransaction {
+        return BknDbTransaction(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: BknDbTransaction) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BknDbTransaction {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: BknDbTransaction, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBknDbTransaction_lift(_ handle: UInt64) throws -> BknDbTransaction {
+    return try FfiConverterTypeBknDbTransaction.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBknDbTransaction_lower(_ value: BknDbTransaction) -> UInt64 {
+    return FfiConverterTypeBknDbTransaction.lower(value)
+}
+
+
+
+
+public struct FfiAgg: Equatable, Hashable {
+    public var `func`: FfiAggFunc
+    public var column: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(`func`: FfiAggFunc, column: String? = nil) {
+        self.`func` = `func`
+        self.column = column
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiAgg: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAgg: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAgg {
+        return
+            try FfiAgg(
+                func: FfiConverterTypeFfiAggFunc.read(from: &buf), 
+                column: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAgg, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiAggFunc.write(value.`func`, into: &buf)
+        FfiConverterOptionString.write(value.column, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAgg_lift(_ buf: RustBuffer) throws -> FfiAgg {
+    return try FfiConverterTypeFfiAgg.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAgg_lower(_ value: FfiAgg) -> RustBuffer {
+    return FfiConverterTypeFfiAgg.lower(value)
+}
+
+
+public struct FfiAggregateRow: Equatable, Hashable {
+    public var group: [FfiPropValue]
+    public var values: [FfiPropValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(group: [FfiPropValue], values: [FfiPropValue]) {
+        self.group = group
+        self.values = values
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiAggregateRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAggregateRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAggregateRow {
+        return
+            try FfiAggregateRow(
+                group: FfiConverterSequenceTypeFfiPropValue.read(from: &buf), 
+                values: FfiConverterSequenceTypeFfiPropValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAggregateRow, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiPropValue.write(value.group, into: &buf)
+        FfiConverterSequenceTypeFfiPropValue.write(value.values, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAggregateRow_lift(_ buf: RustBuffer) throws -> FfiAggregateRow {
+    return try FfiConverterTypeFfiAggregateRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAggregateRow_lower(_ value: FfiAggregateRow) -> RustBuffer {
+    return FfiConverterTypeFfiAggregateRow.lower(value)
+}
+
+
+public struct FfiColumn: Equatable, Hashable {
+    public var name: String
+    public var kind: FfiColumnKind
+    public var nullable: Bool
+    public var unique: Bool
+    public var defaultValue: FfiPropValue?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, kind: FfiColumnKind, nullable: Bool = true, unique: Bool = false, defaultValue: FfiPropValue? = nil) {
+        self.name = name
+        self.kind = kind
+        self.nullable = nullable
+        self.unique = unique
+        self.defaultValue = defaultValue
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiColumn: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiColumn: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiColumn {
+        return
+            try FfiColumn(
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFfiColumnKind.read(from: &buf), 
+                nullable: FfiConverterBool.read(from: &buf), 
+                unique: FfiConverterBool.read(from: &buf), 
+                defaultValue: FfiConverterOptionTypeFfiPropValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiColumn, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeFfiColumnKind.write(value.kind, into: &buf)
+        FfiConverterBool.write(value.nullable, into: &buf)
+        FfiConverterBool.write(value.unique, into: &buf)
+        FfiConverterOptionTypeFfiPropValue.write(value.defaultValue, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumn_lift(_ buf: RustBuffer) throws -> FfiColumn {
+    return try FfiConverterTypeFfiColumn.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumn_lower(_ value: FfiColumn) -> RustBuffer {
+    return FfiConverterTypeFfiColumn.lower(value)
+}
 
 
 public struct FfiEdgeInput: Equatable, Hashable {
@@ -1123,6 +2247,73 @@ public func FfiConverterTypeFfiEdgeRecord_lower(_ value: FfiEdgeRecord) -> RustB
 }
 
 
+/**
+ * One node of a filter expression. A filter is a list of nodes in
+ * post-order: each node's `children` are indices of *earlier* nodes, and
+ * the last node is the root. Every node must be used exactly once.
+ */
+public struct FfiExprNode: Equatable, Hashable {
+    public var op: FfiExprOp
+    public var column: String?
+    public var values: [FfiPropValue]
+    public var children: [UInt32]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(op: FfiExprOp, column: String? = nil, values: [FfiPropValue] = [], children: [UInt32] = []) {
+        self.op = op
+        self.column = column
+        self.values = values
+        self.children = children
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiExprNode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiExprNode: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiExprNode {
+        return
+            try FfiExprNode(
+                op: FfiConverterTypeFfiExprOp.read(from: &buf), 
+                column: FfiConverterOptionString.read(from: &buf), 
+                values: FfiConverterSequenceTypeFfiPropValue.read(from: &buf), 
+                children: FfiConverterSequenceUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiExprNode, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiExprOp.write(value.op, into: &buf)
+        FfiConverterOptionString.write(value.column, into: &buf)
+        FfiConverterSequenceTypeFfiPropValue.write(value.values, into: &buf)
+        FfiConverterSequenceUInt32.write(value.children, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiExprNode_lift(_ buf: RustBuffer) throws -> FfiExprNode {
+    return try FfiConverterTypeFfiExprNode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiExprNode_lower(_ value: FfiExprNode) -> RustBuffer {
+    return FfiConverterTypeFfiExprNode.lower(value)
+}
+
+
 public struct FfiHubRecord: Equatable, Hashable {
     public var nodeId: UInt64
     public var degree: UInt64
@@ -1174,6 +2365,75 @@ public func FfiConverterTypeFfiHubRecord_lift(_ buf: RustBuffer) throws -> FfiHu
 #endif
 public func FfiConverterTypeFfiHubRecord_lower(_ value: FfiHubRecord) -> RustBuffer {
     return FfiConverterTypeFfiHubRecord.lower(value)
+}
+
+
+/**
+ * Tuning knobs for the on-disk (LSM) engine.
+ */
+public struct FfiLsmOptions: Equatable, Hashable {
+    /**
+     * Flush the in-memory write buffer to disk once it reaches this size.
+     */
+    public var memtableFlushBytes: UInt64
+    /**
+     * Compact automatically once this many on-disk segments exist.
+     */
+    public var compactionTriggerFiles: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Flush the in-memory write buffer to disk once it reaches this size.
+         */memtableFlushBytes: UInt64, 
+        /**
+         * Compact automatically once this many on-disk segments exist.
+         */compactionTriggerFiles: UInt32) {
+        self.memtableFlushBytes = memtableFlushBytes
+        self.compactionTriggerFiles = compactionTriggerFiles
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLsmOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLsmOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLsmOptions {
+        return
+            try FfiLsmOptions(
+                memtableFlushBytes: FfiConverterUInt64.read(from: &buf), 
+                compactionTriggerFiles: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLsmOptions, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.memtableFlushBytes, into: &buf)
+        FfiConverterUInt32.write(value.compactionTriggerFiles, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLsmOptions_lift(_ buf: RustBuffer) throws -> FfiLsmOptions {
+    return try FfiConverterTypeFfiLsmOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLsmOptions_lower(_ value: FfiLsmOptions) -> RustBuffer {
+    return FfiConverterTypeFfiLsmOptions.lower(value)
 }
 
 
@@ -1343,6 +2603,60 @@ public func FfiConverterTypeFfiNodeRecord_lower(_ value: FfiNodeRecord) -> RustB
 }
 
 
+public struct FfiOrder: Equatable, Hashable {
+    public var column: String
+    public var descending: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(column: String, descending: Bool = false) {
+        self.column = column
+        self.descending = descending
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiOrder: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiOrder: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiOrder {
+        return
+            try FfiOrder(
+                column: FfiConverterString.read(from: &buf), 
+                descending: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiOrder, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.column, into: &buf)
+        FfiConverterBool.write(value.descending, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrder_lift(_ buf: RustBuffer) throws -> FfiOrder {
+    return try FfiConverterTypeFfiOrder.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrder_lower(_ value: FfiOrder) -> RustBuffer {
+    return FfiConverterTypeFfiOrder.lower(value)
+}
+
+
 public struct FfiPathResult: Equatable, Hashable {
     public var steps: [FfiPathStep]
     public var nodeIds: [UInt64]
@@ -1459,15 +2773,149 @@ public func FfiConverterTypeFfiPathStep_lower(_ value: FfiPathStep) -> RustBuffe
 }
 
 
-public struct FfiSyncBatch: Equatable, Hashable {
-    public var nodes: [FfiNodeInput]
-    public var edges: [FfiEdgeInput]
+public struct FfiQuery: Equatable, Hashable {
+    public var filter: [FfiExprNode]
+    public var orderBy: [FfiOrder]
+    public var offset: UInt64
+    public var limit: UInt64?
+    /**
+     * Projection; `None` returns every column.
+     */
+    public var columns: [String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodes: [FfiNodeInput], edges: [FfiEdgeInput]) {
+    public init(filter: [FfiExprNode] = [], orderBy: [FfiOrder] = [], offset: UInt64 = UInt64(0), limit: UInt64? = nil, 
+        /**
+         * Projection; `None` returns every column.
+         */columns: [String]? = nil) {
+        self.filter = filter
+        self.orderBy = orderBy
+        self.offset = offset
+        self.limit = limit
+        self.columns = columns
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiQuery: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiQuery: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiQuery {
+        return
+            try FfiQuery(
+                filter: FfiConverterSequenceTypeFfiExprNode.read(from: &buf), 
+                orderBy: FfiConverterSequenceTypeFfiOrder.read(from: &buf), 
+                offset: FfiConverterUInt64.read(from: &buf), 
+                limit: FfiConverterOptionUInt64.read(from: &buf), 
+                columns: FfiConverterOptionSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiQuery, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiExprNode.write(value.filter, into: &buf)
+        FfiConverterSequenceTypeFfiOrder.write(value.orderBy, into: &buf)
+        FfiConverterUInt64.write(value.offset, into: &buf)
+        FfiConverterOptionUInt64.write(value.limit, into: &buf)
+        FfiConverterOptionSequenceString.write(value.columns, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuery_lift(_ buf: RustBuffer) throws -> FfiQuery {
+    return try FfiConverterTypeFfiQuery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuery_lower(_ value: FfiQuery) -> RustBuffer {
+    return FfiConverterTypeFfiQuery.lower(value)
+}
+
+
+public struct FfiRow: Equatable, Hashable {
+    public var pk: FfiPropValue
+    public var values: [String: FfiPropValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pk: FfiPropValue, values: [String: FfiPropValue]) {
+        self.pk = pk
+        self.values = values
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRow {
+        return
+            try FfiRow(
+                pk: FfiConverterTypeFfiPropValue.read(from: &buf), 
+                values: FfiConverterDictionaryStringTypeFfiPropValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRow, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiPropValue.write(value.pk, into: &buf)
+        FfiConverterDictionaryStringTypeFfiPropValue.write(value.values, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRow_lift(_ buf: RustBuffer) throws -> FfiRow {
+    return try FfiConverterTypeFfiRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRow_lower(_ value: FfiRow) -> RustBuffer {
+    return FfiConverterTypeFfiRow.lower(value)
+}
+
+
+public struct FfiSyncBatch: Equatable, Hashable {
+    public var nodes: [FfiNodeInput]
+    public var edges: [FfiEdgeInput]
+    /**
+     * Relational rows, upserted by primary key (so a batch can be re-applied).
+     */
+    public var rows: [FfiTableRows]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(nodes: [FfiNodeInput], edges: [FfiEdgeInput], 
+        /**
+         * Relational rows, upserted by primary key (so a batch can be re-applied).
+         */rows: [FfiTableRows] = []) {
         self.nodes = nodes
         self.edges = edges
+        self.rows = rows
     }
 
     
@@ -1487,13 +2935,15 @@ public struct FfiConverterTypeFfiSyncBatch: FfiConverterRustBuffer {
         return
             try FfiSyncBatch(
                 nodes: FfiConverterSequenceTypeFfiNodeInput.read(from: &buf), 
-                edges: FfiConverterSequenceTypeFfiEdgeInput.read(from: &buf)
+                edges: FfiConverterSequenceTypeFfiEdgeInput.read(from: &buf), 
+                rows: FfiConverterSequenceTypeFfiTableRows.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiSyncBatch, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeFfiNodeInput.write(value.nodes, into: &buf)
         FfiConverterSequenceTypeFfiEdgeInput.write(value.edges, into: &buf)
+        FfiConverterSequenceTypeFfiTableRows.write(value.rows, into: &buf)
     }
 }
 
@@ -1516,12 +2966,20 @@ public func FfiConverterTypeFfiSyncBatch_lower(_ value: FfiSyncBatch) -> RustBuf
 public struct FfiSyncResult: Equatable, Hashable {
     public var nodeIds: [UInt64]
     public var edgeIds: [UInt64]
+    /**
+     * Primary keys of `FfiSyncBatch::rows`, one list per table entry.
+     */
+    public var rowPks: [[FfiPropValue]]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeIds: [UInt64], edgeIds: [UInt64]) {
+    public init(nodeIds: [UInt64], edgeIds: [UInt64], 
+        /**
+         * Primary keys of `FfiSyncBatch::rows`, one list per table entry.
+         */rowPks: [[FfiPropValue]]) {
         self.nodeIds = nodeIds
         self.edgeIds = edgeIds
+        self.rowPks = rowPks
     }
 
     
@@ -1541,13 +2999,15 @@ public struct FfiConverterTypeFfiSyncResult: FfiConverterRustBuffer {
         return
             try FfiSyncResult(
                 nodeIds: FfiConverterSequenceUInt64.read(from: &buf), 
-                edgeIds: FfiConverterSequenceUInt64.read(from: &buf)
+                edgeIds: FfiConverterSequenceUInt64.read(from: &buf), 
+                rowPks: FfiConverterSequenceSequenceTypeFfiPropValue.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiSyncResult, into buf: inout [UInt8]) {
         FfiConverterSequenceUInt64.write(value.nodeIds, into: &buf)
         FfiConverterSequenceUInt64.write(value.edgeIds, into: &buf)
+        FfiConverterSequenceSequenceTypeFfiPropValue.write(value.rowPks, into: &buf)
     }
 }
 
@@ -1565,6 +3025,361 @@ public func FfiConverterTypeFfiSyncResult_lift(_ buf: RustBuffer) throws -> FfiS
 public func FfiConverterTypeFfiSyncResult_lower(_ value: FfiSyncResult) -> RustBuffer {
     return FfiConverterTypeFfiSyncResult.lower(value)
 }
+
+
+/**
+ * Rows to upsert into one registered table as part of a sync batch.
+ */
+public struct FfiTableRows: Equatable, Hashable {
+    public var table: String
+    public var rows: [[String: FfiPropValue]]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(table: String, rows: [[String: FfiPropValue]]) {
+        self.table = table
+        self.rows = rows
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTableRows: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableRows: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableRows {
+        return
+            try FfiTableRows(
+                table: FfiConverterString.read(from: &buf), 
+                rows: FfiConverterSequenceDictionaryStringTypeFfiPropValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableRows, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.table, into: &buf)
+        FfiConverterSequenceDictionaryStringTypeFfiPropValue.write(value.rows, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableRows_lift(_ buf: RustBuffer) throws -> FfiTableRows {
+    return try FfiConverterTypeFfiTableRows.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableRows_lower(_ value: FfiTableRows) -> RustBuffer {
+    return FfiConverterTypeFfiTableRows.lower(value)
+}
+
+
+public struct FfiTableSchema: Equatable, Hashable {
+    public var name: String
+    public var columns: [FfiColumn]
+    public var primaryKey: String
+    public var autoIncrement: Bool
+    /**
+     * Secondary indexes (UNIQUE columns are indexed automatically).
+     */
+    public var indexedColumns: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, columns: [FfiColumn], primaryKey: String, autoIncrement: Bool = false, 
+        /**
+         * Secondary indexes (UNIQUE columns are indexed automatically).
+         */indexedColumns: [String] = []) {
+        self.name = name
+        self.columns = columns
+        self.primaryKey = primaryKey
+        self.autoIncrement = autoIncrement
+        self.indexedColumns = indexedColumns
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTableSchema: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableSchema: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableSchema {
+        return
+            try FfiTableSchema(
+                name: FfiConverterString.read(from: &buf), 
+                columns: FfiConverterSequenceTypeFfiColumn.read(from: &buf), 
+                primaryKey: FfiConverterString.read(from: &buf), 
+                autoIncrement: FfiConverterBool.read(from: &buf), 
+                indexedColumns: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableSchema, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceTypeFfiColumn.write(value.columns, into: &buf)
+        FfiConverterString.write(value.primaryKey, into: &buf)
+        FfiConverterBool.write(value.autoIncrement, into: &buf)
+        FfiConverterSequenceString.write(value.indexedColumns, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableSchema_lift(_ buf: RustBuffer) throws -> FfiTableSchema {
+    return try FfiConverterTypeFfiTableSchema.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableSchema_lower(_ value: FfiTableSchema) -> RustBuffer {
+    return FfiConverterTypeFfiTableSchema.lower(value)
+}
+
+
+/**
+ * One node reached by a breadth-first traversal.
+ */
+public struct FfiTraversalHit: Equatable, Hashable {
+    public var nodeId: UInt64
+    public var depth: UInt32
+    public var viaEdgeId: UInt64?
+    public var parentId: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(nodeId: UInt64, depth: UInt32, viaEdgeId: UInt64?, parentId: UInt64?) {
+        self.nodeId = nodeId
+        self.depth = depth
+        self.viaEdgeId = viaEdgeId
+        self.parentId = parentId
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTraversalHit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTraversalHit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTraversalHit {
+        return
+            try FfiTraversalHit(
+                nodeId: FfiConverterUInt64.read(from: &buf), 
+                depth: FfiConverterUInt32.read(from: &buf), 
+                viaEdgeId: FfiConverterOptionUInt64.read(from: &buf), 
+                parentId: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTraversalHit, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.nodeId, into: &buf)
+        FfiConverterUInt32.write(value.depth, into: &buf)
+        FfiConverterOptionUInt64.write(value.viaEdgeId, into: &buf)
+        FfiConverterOptionUInt64.write(value.parentId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTraversalHit_lift(_ buf: RustBuffer) throws -> FfiTraversalHit {
+    return try FfiConverterTypeFfiTraversalHit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTraversalHit_lower(_ value: FfiTraversalHit) -> RustBuffer {
+    return FfiConverterTypeFfiTraversalHit.lower(value)
+}
+
+
+/**
+ * A neighbor together with the type of the edge leading to it.
+ */
+public struct FfiTypedNeighbor: Equatable, Hashable {
+    public var nodeId: UInt64
+    public var edgeId: UInt64
+    public var edgeType: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(nodeId: UInt64, edgeId: UInt64, edgeType: String) {
+        self.nodeId = nodeId
+        self.edgeId = edgeId
+        self.edgeType = edgeType
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTypedNeighbor: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTypedNeighbor: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTypedNeighbor {
+        return
+            try FfiTypedNeighbor(
+                nodeId: FfiConverterUInt64.read(from: &buf), 
+                edgeId: FfiConverterUInt64.read(from: &buf), 
+                edgeType: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTypedNeighbor, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.nodeId, into: &buf)
+        FfiConverterUInt64.write(value.edgeId, into: &buf)
+        FfiConverterString.write(value.edgeType, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTypedNeighbor_lift(_ buf: RustBuffer) throws -> FfiTypedNeighbor {
+    return try FfiConverterTypeFfiTypedNeighbor.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTypedNeighbor_lower(_ value: FfiTypedNeighbor) -> RustBuffer {
+    return FfiConverterTypeFfiTypedNeighbor.lower(value)
+}
+
+
+
+public enum FfiAggFunc: Equatable, Hashable {
+    
+    /**
+     * Number of rows (no column).
+     */
+    case count
+    /**
+     * Number of rows where the column is non-null.
+     */
+    case countColumn
+    case sum
+    case min
+    case max
+    case avg
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiAggFunc: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAggFunc: FfiConverterRustBuffer {
+    typealias SwiftType = FfiAggFunc
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAggFunc {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .count
+        
+        case 2: return .countColumn
+        
+        case 3: return .sum
+        
+        case 4: return .min
+        
+        case 5: return .max
+        
+        case 6: return .avg
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiAggFunc, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .count:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .countColumn:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .sum:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .min:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .max:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .avg:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAggFunc_lift(_ buf: RustBuffer) throws -> FfiAggFunc {
+    return try FfiConverterTypeFfiAggFunc.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAggFunc_lower(_ value: FfiAggFunc) -> RustBuffer {
+    return FfiConverterTypeFfiAggFunc.lower(value)
+}
+
 
 
 public 
@@ -1588,6 +3403,13 @@ enum FfiBknError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case SchemaMismatch(table: String, message: String
     )
     case ConstraintViolation(table: String, message: String
+    )
+    case DatabaseClosed
+    case TransactionInProgress
+    case TransactionClosed
+    case TransactionAborted(message: String
+    )
+    case InvalidArgument(message: String
     )
 
     
@@ -1644,6 +3466,15 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
             )
         case 9: return .ConstraintViolation(
             table: try FfiConverterString.read(from: &buf), 
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 10: return .DatabaseClosed
+        case 11: return .TransactionInProgress
+        case 12: return .TransactionClosed
+        case 13: return .TransactionAborted(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 14: return .InvalidArgument(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -1704,6 +3535,28 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
             FfiConverterString.write(table, into: &buf)
             FfiConverterString.write(message, into: &buf)
             
+        
+        case .DatabaseClosed:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .TransactionInProgress:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .TransactionClosed:
+            writeInt(&buf, Int32(12))
+        
+        
+        case let .TransactionAborted(message):
+            writeInt(&buf, Int32(13))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .InvalidArgument(message):
+            writeInt(&buf, Int32(14))
+            FfiConverterString.write(message, into: &buf)
+            
         }
     }
 }
@@ -1722,6 +3575,93 @@ public func FfiConverterTypeFfiBknError_lift(_ buf: RustBuffer) throws -> FfiBkn
 public func FfiConverterTypeFfiBknError_lower(_ value: FfiBknError) -> RustBuffer {
     return FfiConverterTypeFfiBknError.lower(value)
 }
+
+
+
+public enum FfiColumnKind: Equatable, Hashable {
+    
+    case bool
+    case int
+    case float
+    case str
+    case bytes
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiColumnKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiColumnKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiColumnKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiColumnKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .bool
+        
+        case 2: return .int
+        
+        case 3: return .float
+        
+        case 4: return .str
+        
+        case 5: return .bytes
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiColumnKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .bool:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .int:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .float:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .str:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .bytes:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumnKind_lift(_ buf: RustBuffer) throws -> FfiColumnKind {
+    return try FfiConverterTypeFfiColumnKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumnKind_lower(_ value: FfiColumnKind) -> RustBuffer {
+    return FfiConverterTypeFfiColumnKind.lower(value)
+}
+
 
 
 
@@ -1793,6 +3733,164 @@ public func FfiConverterTypeFfiDirection_lift(_ buf: RustBuffer) throws -> FfiDi
 #endif
 public func FfiConverterTypeFfiDirection_lower(_ value: FfiDirection) -> RustBuffer {
     return FfiConverterTypeFfiDirection.lower(value)
+}
+
+
+
+
+public enum FfiExprOp: Equatable, Hashable {
+    
+    case eq
+    case ne
+    case lt
+    case le
+    case gt
+    case ge
+    /**
+     * `column` is one of `values`.
+     */
+    case `in`
+    case isNull
+    case isNotNull
+    /**
+     * `column` (a string) starts with `values[0]` (a string).
+     */
+    case startsWith
+    /**
+     * All of `children`.
+     */
+    case and
+    /**
+     * Any of `children`.
+     */
+    case or
+    /**
+     * Negation of `children[0]`.
+     */
+    case not
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiExprOp: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiExprOp: FfiConverterRustBuffer {
+    typealias SwiftType = FfiExprOp
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiExprOp {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .eq
+        
+        case 2: return .ne
+        
+        case 3: return .lt
+        
+        case 4: return .le
+        
+        case 5: return .gt
+        
+        case 6: return .ge
+        
+        case 7: return .`in`
+        
+        case 8: return .isNull
+        
+        case 9: return .isNotNull
+        
+        case 10: return .startsWith
+        
+        case 11: return .and
+        
+        case 12: return .or
+        
+        case 13: return .not
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiExprOp, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .eq:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .ne:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .lt:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .le:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .gt:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .ge:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .`in`:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .isNull:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .isNotNull:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .startsWith:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .and:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .or:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .not:
+            writeInt(&buf, Int32(13))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiExprOp_lift(_ buf: RustBuffer) throws -> FfiExprOp {
+    return try FfiConverterTypeFfiExprOp.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiExprOp_lower(_ value: FfiExprOp) -> RustBuffer {
+    return FfiConverterTypeFfiExprOp.lower(value)
 }
 
 
@@ -2028,6 +4126,78 @@ fileprivate struct FfiConverterOptionTypeFfiPathResult: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiRow: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRow?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiRow.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiRow.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiTableSchema: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTableSchema?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiTableSchema.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiTableSchema.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiPropValue: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPropValue?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiPropValue.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiPropValue.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]?
 
@@ -2046,6 +4216,31 @@ fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
         case 1: return try FfiConverterSequenceString.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt32]
+
+    public static func write(_ value: [UInt32], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterUInt32.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt32]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
     }
 }
 
@@ -2102,6 +4297,81 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiAgg: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiAgg]
+
+    public static func write(_ value: [FfiAgg], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiAgg.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiAgg] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiAgg]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiAgg.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiAggregateRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiAggregateRow]
+
+    public static func write(_ value: [FfiAggregateRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiAggregateRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiAggregateRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiAggregateRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiAggregateRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiColumn: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiColumn]
+
+    public static func write(_ value: [FfiColumn], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiColumn.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiColumn] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiColumn]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiColumn.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiEdgeInput: FfiConverterRustBuffer {
     typealias SwiftType = [FfiEdgeInput]
 
@@ -2119,6 +4389,31 @@ fileprivate struct FfiConverterSequenceTypeFfiEdgeInput: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiEdgeInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiExprNode: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiExprNode]
+
+    public static func write(_ value: [FfiExprNode], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiExprNode.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiExprNode] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiExprNode]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiExprNode.read(from: &buf))
         }
         return seq
     }
@@ -2202,6 +4497,31 @@ fileprivate struct FfiConverterSequenceTypeFfiNodeInput: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiOrder: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiOrder]
+
+    public static func write(_ value: [FfiOrder], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiOrder.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiOrder] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiOrder]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiOrder.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiPathStep: FfiConverterRustBuffer {
     typealias SwiftType = [FfiPathStep]
 
@@ -2219,6 +4539,206 @@ fileprivate struct FfiConverterSequenceTypeFfiPathStep: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiPathStep.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiRow]
+
+    public static func write(_ value: [FfiRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableRows: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableRows]
+
+    public static func write(_ value: [FfiTableRows], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableRows.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableRows] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableRows]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableRows.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableSchema: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableSchema]
+
+    public static func write(_ value: [FfiTableSchema], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableSchema.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableSchema] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableSchema]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableSchema.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTraversalHit: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTraversalHit]
+
+    public static func write(_ value: [FfiTraversalHit], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTraversalHit.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTraversalHit] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTraversalHit]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTraversalHit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTypedNeighbor: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTypedNeighbor]
+
+    public static func write(_ value: [FfiTypedNeighbor], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTypedNeighbor.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTypedNeighbor] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTypedNeighbor]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTypedNeighbor.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiPropValue: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPropValue]
+
+    public static func write(_ value: [FfiPropValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPropValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPropValue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPropValue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPropValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceSequenceTypeFfiPropValue: FfiConverterRustBuffer {
+    typealias SwiftType = [[FfiPropValue]]
+
+    public static func write(_ value: [[FfiPropValue]], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterSequenceTypeFfiPropValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [[FfiPropValue]] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [[FfiPropValue]]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterSequenceTypeFfiPropValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceDictionaryStringTypeFfiPropValue: FfiConverterRustBuffer {
+    typealias SwiftType = [[String: FfiPropValue]]
+
+    public static func write(_ value: [[String: FfiPropValue]], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterDictionaryStringTypeFfiPropValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [[String: FfiPropValue]] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [[String: FfiPropValue]]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterDictionaryStringTypeFfiPropValue.read(from: &buf))
         }
         return seq
     }
@@ -2265,7 +4785,22 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate() != 17739) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_begin_transaction() != 20627) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_cascade_delete() != 35560) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_close() != 59774) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_compact() != 19869) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count() != 538) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge() != 19597) {
@@ -2274,13 +4809,37 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk() != 46431) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index() != 42108) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node() != 55339) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk() != 29999) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_table() != 63913) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_degree() != 42609) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_edge() != 45594) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_node() != 3983) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows() != 33801) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index() != 15048) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table() != 2085) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table() != 27575) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path() != 36954) {
@@ -2292,22 +4851,145 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_node() != 2294) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row() != 9466) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert() != 23042) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many() != 9293) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed() != 53864) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables() != 21732) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors() != 58866) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_in() != 30079) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out() != 62954) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() != 57500) {
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_select() != 42895) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs() != 19397) {
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() != 11272) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_table_schema() != 26297) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_top_hubs() != 47001) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_traverse() != 23940) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_edge_properties() != 43792) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_node_properties() != 35215) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_update_rows() != 63732) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert() != 23307) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many() != 7825) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_commit() != 11719) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_count() != 13792) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_create_edge() != 48873) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_create_edges_bulk() != 46712) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_create_node() != 26094) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_create_nodes_bulk() != 30699) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_create_table() != 36546) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_delete_edge() != 56368) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_delete_node() != 14566) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_delete_rows() != 54633) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_drop_table() != 32728) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_ensure_table() != 17458) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_edge() != 52532) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_node() != 29010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_row() != 41426) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_insert() != 47708) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_insert_many() != 55320) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_is_active() != 8731) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_neighbors() != 43884) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_rollback() != 59147) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_select() != 31707) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_update_edge_properties() != 39859) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_update_node_properties() != 14939) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_update_rows() != 51208) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_upsert() != 35298) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_upsert_many() != 32648) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_constructor_bkndbengine_in_memory() != 31228) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_bkndb_ffi_checksum_constructor_bkndbengine_open() != 51928) {
+    if (uniffi_bkndb_ffi_checksum_constructor_bkndbengine_open() != 60123) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_constructor_bkndbengine_open_with_options() != 60277) {
         return InitializationResult.apiChecksumMismatch
     }
 

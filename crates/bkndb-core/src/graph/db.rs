@@ -2,9 +2,9 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 use crate::graph::codec::{
-    adj_in_key, adj_out_key, adj_type_prefix, adj_type_upper_bound, decode_adj_key, edge_key,
-    next_node_prefix, node_key, ADJ_IN, ADJ_OUT, EDGES, META, NEXT_EDGE_ID_KEY, NEXT_NODE_ID_KEY,
-    NODES,
+    ADJ_IN, ADJ_OUT, EDGES, META, NEXT_EDGE_ID_KEY, NEXT_NODE_ID_KEY, NODES, adj_in_key,
+    adj_out_key, adj_type_prefix, adj_type_upper_bound, decode_adj_key, edge_key, next_node_prefix,
+    node_key,
 };
 use crate::graph::model::{EdgeId, EdgeRecord, NodeId, NodeRecord, Properties};
 use crate::{BknError, StorageBackend, StorageReadTx, StorageWriteTx};
@@ -68,7 +68,10 @@ impl<B: StorageBackend> GraphDb<B> {
         Ok(id)
     }
 
-    pub fn create_nodes_bulk(&self, nodes: impl IntoIterator<Item = (impl Into<String>, Properties)>) -> Result<Vec<NodeId>, BknError> {
+    pub fn create_nodes_bulk(
+        &self,
+        nodes: impl IntoIterator<Item = (impl Into<String>, Properties)>,
+    ) -> Result<Vec<NodeId>, BknError> {
         let mut wtx = self.backend.begin_write()?;
         let ids = create_nodes_bulk_in(&mut wtx, nodes)?;
         wtx.commit()?;
@@ -93,7 +96,10 @@ impl<B: StorageBackend> GraphDb<B> {
         Ok(id)
     }
 
-    pub fn create_edges_bulk(&self, edges: impl IntoIterator<Item = (NodeId, impl Into<String>, NodeId, Properties)>) -> Result<Vec<EdgeId>, BknError> {
+    pub fn create_edges_bulk(
+        &self,
+        edges: impl IntoIterator<Item = (NodeId, impl Into<String>, NodeId, Properties)>,
+    ) -> Result<Vec<EdgeId>, BknError> {
         let mut wtx = self.backend.begin_write()?;
         let ids = create_edges_bulk_in(&mut wtx, edges)?;
         wtx.commit()?;
@@ -106,24 +112,38 @@ impl<B: StorageBackend> GraphDb<B> {
     }
 
     /// Edges of any type from `node`, filtered to a specific `edge_type`.
-    pub fn neighbors_out(&self, node: NodeId, edge_type: &str) -> Result<Vec<(NodeId, EdgeId)>, BknError> {
+    pub fn neighbors_out(
+        &self,
+        node: NodeId,
+        edge_type: &str,
+    ) -> Result<Vec<(NodeId, EdgeId)>, BknError> {
         let rtx = self.backend.begin_read()?;
         neighbors_out_in(&rtx, node, edge_type)
     }
 
-    pub fn neighbors_in(&self, node: NodeId, edge_type: &str) -> Result<Vec<(NodeId, EdgeId)>, BknError> {
+    pub fn neighbors_in(
+        &self,
+        node: NodeId,
+        edge_type: &str,
+    ) -> Result<Vec<(NodeId, EdgeId)>, BknError> {
         let rtx = self.backend.begin_read()?;
         neighbors_in_in(&rtx, node, edge_type)
     }
 
     /// All outgoing edges from `node`, any type — (edge_type, neighbor, edge_id).
-    pub fn neighbors_out_any(&self, node: NodeId) -> Result<Vec<(String, NodeId, EdgeId)>, BknError> {
+    pub fn neighbors_out_any(
+        &self,
+        node: NodeId,
+    ) -> Result<Vec<(String, NodeId, EdgeId)>, BknError> {
         let rtx = self.backend.begin_read()?;
         neighbors_any_in(&rtx, ADJ_OUT, node)
     }
 
     /// All incoming edges into `node`, any type — (edge_type, neighbor, edge_id).
-    pub fn neighbors_in_any(&self, node: NodeId) -> Result<Vec<(String, NodeId, EdgeId)>, BknError> {
+    pub fn neighbors_in_any(
+        &self,
+        node: NodeId,
+    ) -> Result<Vec<(String, NodeId, EdgeId)>, BknError> {
         let rtx = self.backend.begin_read()?;
         neighbors_any_in(&rtx, ADJ_IN, node)
     }
@@ -158,6 +178,26 @@ impl<B: StorageBackend> GraphDb<B> {
         update_edge_properties_in(&mut wtx, edge, mutate)?;
         wtx.commit()?;
         Ok(())
+    }
+
+    /// Atomic read-modify-write of one node's properties. Errors with
+    /// [`BknError::NotFound`] if the node doesn't exist.
+    pub fn update_node_properties(
+        &self,
+        id: NodeId,
+        mutate: impl FnOnce(&mut Properties),
+    ) -> Result<(), BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        update_node_properties_in(&mut wtx, id, mutate)?;
+        wtx.commit()
+    }
+
+    /// Deletes a single edge; returns `false` if it didn't exist.
+    pub fn delete_edge(&self, edge: EdgeId) -> Result<bool, BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        let existed = delete_edge_in(&mut wtx, edge)?;
+        wtx.commit()?;
+        Ok(existed)
     }
 
     pub fn traversal(&self) -> crate::graph::traversal::TraversalBuilder<'_, B> {
@@ -203,7 +243,9 @@ impl<B: StorageBackend> GraphDb<B> {
     /// open/wrap/run/commit shape exactly.
     pub fn write_tx<F, R>(&self, f: F) -> Result<R, BknError>
     where
-        F: for<'w> FnOnce(&mut crate::graph::txn::GraphWriteBatch<B::WriteTx<'w>>) -> Result<R, BknError>,
+        F: for<'w> FnOnce(
+            &mut crate::graph::txn::GraphWriteBatch<B::WriteTx<'w>>,
+        ) -> Result<R, BknError>,
     {
         let wtx = self.backend.begin_write()?;
         let mut batch = crate::graph::txn::GraphWriteBatch::new(wtx);
@@ -235,7 +277,10 @@ pub(crate) fn create_node_in<W: StorageWriteTx>(
     Ok(id)
 }
 
-pub(crate) fn get_node_in<R: StorageReadTx>(rtx: &R, id: NodeId) -> Result<Option<NodeRecord>, BknError> {
+pub(crate) fn get_node_in<R: StorageReadTx>(
+    rtx: &R,
+    id: NodeId,
+) -> Result<Option<NodeRecord>, BknError> {
     match rtx.get(NODES, &node_key(id))? {
         Some(bytes) => Ok(Some(decode(&bytes)?)),
         None => Ok(None),
@@ -332,7 +377,10 @@ pub(crate) fn create_edges_bulk_in<W: StorageWriteTx>(
     Ok(ids)
 }
 
-pub(crate) fn get_edge_in<R: StorageReadTx>(rtx: &R, id: EdgeId) -> Result<Option<EdgeRecord>, BknError> {
+pub(crate) fn get_edge_in<R: StorageReadTx>(
+    rtx: &R,
+    id: EdgeId,
+) -> Result<Option<EdgeRecord>, BknError> {
     match rtx.get(EDGES, &edge_key(id))? {
         Some(bytes) => Ok(Some(decode(&bytes)?)),
         None => Ok(None),
@@ -371,6 +419,41 @@ pub(crate) fn delete_node_in<W: StorageWriteTx>(wtx: &mut W, id: NodeId) -> Resu
 
     wtx.delete(NODES, &node_key(id))?;
     Ok(())
+}
+
+/// Atomic read-modify-write of one node's properties (its label is kept).
+pub(crate) fn update_node_properties_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    id: NodeId,
+    mutate: impl FnOnce(&mut Properties),
+) -> Result<(), BknError> {
+    let bytes = wtx.get(NODES, &node_key(id))?.ok_or(BknError::NotFound)?;
+    let mut record: NodeRecord = decode(&bytes)?;
+    mutate(&mut record.properties);
+    wtx.put(NODES, &node_key(id), &encode(&record)?)?;
+    Ok(())
+}
+
+/// Deletes one edge together with both of its adjacency-index rows.
+/// Returns `false` if no such edge exists.
+pub(crate) fn delete_edge_in<W: StorageWriteTx>(
+    wtx: &mut W,
+    edge: EdgeId,
+) -> Result<bool, BknError> {
+    let Some(bytes) = wtx.get(EDGES, &edge_key(edge))? else {
+        return Ok(false);
+    };
+    let record: EdgeRecord = decode(&bytes)?;
+    wtx.delete(
+        ADJ_OUT,
+        &adj_out_key(record.from, &record.edge_type, record.to, edge),
+    )?;
+    wtx.delete(
+        ADJ_IN,
+        &adj_in_key(record.to, &record.edge_type, record.from, edge),
+    )?;
+    wtx.delete(EDGES, &edge_key(edge))?;
+    Ok(true)
 }
 
 pub(crate) fn update_edge_properties_in<W: StorageWriteTx>(
@@ -465,7 +548,9 @@ pub(crate) fn top_hubs_in<R: StorageReadTx>(
         }
 
         let deg = match direction {
-            crate::graph::traversal::Direction::Out => neighbors_any_in(rtx, ADJ_OUT, node_id)?.len(),
+            crate::graph::traversal::Direction::Out => {
+                neighbors_any_in(rtx, ADJ_OUT, node_id)?.len()
+            }
             crate::graph::traversal::Direction::In => neighbors_any_in(rtx, ADJ_IN, node_id)?.len(),
             crate::graph::traversal::Direction::Both => {
                 neighbors_any_in(rtx, ADJ_OUT, node_id)?.len()
@@ -524,5 +609,3 @@ pub(crate) fn cascade_delete_in<W: StorageWriteTx>(
 
     Ok(to_delete)
 }
-
-

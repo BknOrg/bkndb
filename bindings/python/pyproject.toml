@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
 
 [project]
 name = "bkndb"
@@ -9,14 +9,18 @@ description = "Embedded hybrid graph + relational database engine — single-fil
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "Bkn Org" }]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Rust",
     "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
     "Typing :: Typed",
 ]
 
@@ -25,18 +29,20 @@ Homepage = "https://github.com/BknOrg/bkn-db"
 Repository = "https://github.com/BknOrg/bkn-db"
 
 [project.optional-dependencies]
+pandas = ["pandas>=1.5"]
+networkx = ["networkx>=3"]
 test = ["pytest>=7"]
 
-[tool.setuptools]
-packages = ["bkndb", "bkndb._native"]
-include-package-data = true
-
-[tool.setuptools.package-data]
-# The compiled native library is platform-specific and named at build time
-# (`bkndb_ffi.dll` / `libbkndb_ffi.so` / `libbkndb_ffi.dylib`) by
-# scripts/build_native.py — only one of these exists per built wheel.
-"bkndb._native" = ["*.dll", "*.so", "*.dylib", "py.typed"]
-"bkndb" = ["py.typed"]
+[tool.maturin]
+# The native library is loaded through UniFFI's ctypes bindings, not the
+# CPython C-API, so one `py3-none-<platform>` wheel serves every Python 3.x.
+bindings = "uniffi"
+manifest-path = "../../crates/bkndb-ffi/Cargo.toml"
+python-source = "."
+# Generated bindings + compiled library land in the private `bkndb._native`
+# subpackage; the public API in `bkndb/` wraps them.
+module-name = "bkndb._native"
+include = [{ path = "bkndb/py.typed", format = ["sdist", "wheel"] }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
