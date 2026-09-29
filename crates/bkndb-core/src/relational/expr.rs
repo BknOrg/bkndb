@@ -13,10 +13,15 @@
 //! comparisons between incomparable kinds, e.g. Str vs Int); use
 //! [`Col::is_null`] / [`Col::is_not_null`] to test for null. `Int` and
 //! `Float` compare numerically with each other.
+//!
+//! A column reference may be a dotted path into a `List`/`Map` column —
+//! `col("meta.author.name")`, `col("tags.0")` — in filters, ordering and
+//! grouping. A column whose name literally contains the dots wins.
 use std::cmp::Ordering;
 
 use crate::relational::db::Row;
 use crate::relational::schema::{ColumnKind, TableSchema};
+pub(crate) use crate::value::{compare_values, like_matches, total_cmp};
 use crate::value::PropValue;
 use crate::BknError;
 
@@ -52,6 +57,12 @@ pub enum Expr {
     IsNotNull(String),
     /// String column starts with the given prefix.
     Prefix(String, String),
+    /// List column has an element equal to the value; Str column contains
+    /// the value as a substring; Map column has the value (a Str) as a key.
+    Contains(String, PropValue),
+    /// SQL `LIKE`: `%` matches any run of characters, `_` exactly one.
+    /// The flag makes it case-insensitive (`ILIKE`).
+    Like(String, String, bool),
     And(Vec<Expr>),
     Or(Vec<Expr>),
     Not(Box<Expr>),
@@ -104,6 +115,35 @@ impl Col {
     pub fn starts_with(self, prefix: impl Into<String>) -> Expr {
         Expr::Prefix(self.0, prefix.into())
     }
+    pub fn contains(self, v: impl Into<PropValue>) -> Expr {
+        Expr::Contains(self.0, v.into())
+    }
+    pub fn like(self, pattern: impl Into<String>) -> Expr {
+        Expr::Like(self.0, pattern.into(), false)
+    }
+    pub fn ilike(self, pattern: impl Into<String>) -> Expr {
+        Expr::Like(self.0, pattern.into(), true)
+    }
+}
+
+/// The value a column reference names in `row`: a column, or a dotted path
+/// into a `List`/`Map` column (see the module docs).
+pub(crate) fn resolve<'r>(schema: &TableSchema, row: &'r Row, name: &str) -> Option<&'r PropValue> {
+    if schema.column(name).is_some() {
+        return row.get(schema, name);
+    }
+    let (head, rest) = name.split_once('.')?;
+    let segments: Vec<&str> = rest.split('.').collect();
+    row.get(schema, head)?.get_path(&segments)
+}
+
+/// The schema column a reference is rooted at, if any.
+pub(crate) fn root_column<'n>(schema: &TableSchema, name: &'n str) -> Option<&'n str> {
+    if schema.column(name).is_some() {
+        return Some(name);
+    }
+    let (head, _) = name.split_once('.')?;
+    schema.column(head).map(|_| head)
 }
 
 impl Expr {
@@ -133,7 +173,7 @@ impl Expr {
     }
 
     pub(crate) fn eval(&self, schema: &TableSchema, row: &Row) -> bool {
-        let value = |c: &str| row.get(schema, c).filter(|v| !matches!(v, PropValue::Null));
+        let value = |c: &str| resolve(schema, row, c).filter(|v| !matches!(v, PropValue::Null));
         match self {
             Expr::Cmp(c, op, PropValue::Null) => match op {
                 // `eq(Null)` / `ne(Null)` read naturally as null tests.
@@ -149,6 +189,13 @@ impl Expr {
             Expr::IsNull(c) => value(c).is_none(),
             Expr::IsNotNull(c) => value(c).is_some(),
             Expr::Prefix(c, p) => matches!(value(c), Some(PropValue::Str(s)) if s.starts_with(p.as_str())),
+            Expr::Contains(c, needle) => match (value(c), needle) {
+                (Some(PropValue::List(items)), n) => items.iter().any(|x| compare_values(x, n) == Some(Ordering::Equal)),
+                (Some(PropValue::Str(s)), PropValue::Str(n)) => s.contains(n.as_str()),
+                (Some(PropValue::Map(m)), PropValue::Str(k)) => m.contains_key(k),
+                _ => false,
+            },
+            Expr::Like(c, pattern, ci) => matches!(value(c), Some(PropValue::Str(s)) if like_matches(s, pattern, *ci)),
             Expr::And(v) => v.iter().all(|e| e.eval(schema, row)),
             Expr::Or(v) => v.iter().any(|e| e.eval(schema, row)),
             Expr::Not(e) => !e.eval(schema, row),
@@ -157,50 +204,17 @@ impl Expr {
 
     pub(crate) fn columns<'e>(&'e self, out: &mut Vec<&'e str>) {
         match self {
-            Expr::Cmp(c, ..) | Expr::In(c, _) | Expr::IsNull(c) | Expr::IsNotNull(c) | Expr::Prefix(c, _) => {
-                out.push(c)
-            }
+            Expr::Cmp(c, ..)
+            | Expr::In(c, _)
+            | Expr::IsNull(c)
+            | Expr::IsNotNull(c)
+            | Expr::Prefix(c, _)
+            | Expr::Contains(c, _)
+            | Expr::Like(c, ..) => out.push(c),
             Expr::And(v) | Expr::Or(v) => v.iter().for_each(|e| e.columns(out)),
             Expr::Not(e) => e.columns(out),
         }
     }
-}
-
-/// Ordering between two non-null values, or `None` if their kinds aren't
-/// comparable. `Int`/`Float` compare numerically across kinds.
-pub(crate) fn compare_values(a: &PropValue, b: &PropValue) -> Option<Ordering> {
-    use PropValue::*;
-    match (a, b) {
-        (Int(x), Int(y)) => Some(x.cmp(y)),
-        (Float(x), Float(y)) => x.partial_cmp(y),
-        (Int(x), Float(y)) => (*x as f64).partial_cmp(y),
-        (Float(x), Int(y)) => x.partial_cmp(&(*y as f64)),
-        (Str(x), Str(y)) => Some(x.cmp(y)),
-        (Bool(x), Bool(y)) => Some(x.cmp(y)),
-        (Bytes(x), Bytes(y)) => Some(x.cmp(y)),
-        _ => None,
-    }
-}
-
-/// A total order over optional values for ORDER BY and grouping: nulls
-/// (and missing values) first, then by kind, then by value.
-pub(crate) fn total_cmp(a: Option<&PropValue>, b: Option<&PropValue>) -> Ordering {
-    fn rank(v: Option<&PropValue>) -> u8 {
-        match v {
-            None | Some(PropValue::Null) => 0,
-            Some(PropValue::Bool(_)) => 1,
-            Some(PropValue::Int(_) | PropValue::Float(_)) => 2,
-            Some(PropValue::Str(_)) => 3,
-            Some(PropValue::Bytes(_)) => 4,
-        }
-    }
-    rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
-        (Some(PropValue::Float(x)), Some(PropValue::Float(y))) => x.total_cmp(y),
-        (Some(PropValue::Int(x)), Some(PropValue::Float(y))) => (*x as f64).total_cmp(y),
-        (Some(PropValue::Float(x)), Some(PropValue::Int(y))) => x.total_cmp(&(*y as f64)),
-        (Some(x), Some(y)) => compare_values(x, y).unwrap_or(Ordering::Equal),
-        _ => Ordering::Equal,
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,5 +366,33 @@ impl Acc {
             Acc::Avg { n: 0, .. } => PropValue::Null,
             Acc::Avg { sum, n } => PropValue::Float(sum / n as f64),
         })
+    }
+}
+
+#[cfg(test)]
+mod like_tests {
+    use super::like_matches;
+
+    #[test]
+    fn like_patterns() {
+        for (text, pattern, expected) in [
+            ("hello", "hello", true),
+            ("hello", "h%", true),
+            ("hello", "%llo", true),
+            ("hello", "%l%", true),
+            ("hello", "h_llo", true),
+            ("hello", "h_lo", false),
+            ("hello", "%", true),
+            ("", "%", true),
+            ("", "_", false),
+            ("abcabc", "%abc", true),
+            ("aXbXc", "a%b%c", true),
+            ("aXbXd", "a%b%c", false),
+            ("naïve", "na_ve", true),
+        ] {
+            assert_eq!(like_matches(text, pattern, false), expected, "{text:?} LIKE {pattern:?}");
+        }
+        assert!(like_matches("HeLLo", "hel%", true));
+        assert!(!like_matches("HeLLo", "hel%", false));
     }
 }

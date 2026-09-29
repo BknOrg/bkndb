@@ -513,6 +513,22 @@ fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
+    typealias FfiType = Float
+    typealias SwiftType = Float
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Float {
+        return try lift(readFloat(&buf))
+    }
+
+    public static func write(_ value: Float, into buf: inout [UInt8]) {
+        writeFloat(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
     typealias FfiType = Double
     typealias SwiftType = Double
@@ -629,6 +645,13 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregates: [FfiAgg]) throws  -> [FfiAggregateRow]
     
     /**
+     * Writes a consistent, compacted copy of everything committed so far to
+     * a new file at `dest` (which must not exist), without blocking readers
+     * or writers. On-disk databases only.
+     */
+    func backup(dest: String) throws 
+    
+    /**
      * Opens an explicit write transaction. Only one can be open at a time;
      * while it is, writes through the engine itself fail with
      * `TransactionInProgress` (reads keep working on the last committed state).
@@ -655,6 +678,11 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func count(table: String, query: FfiQuery) throws  -> UInt64
     
     /**
+     * Number of nodes with `label`.
+     */
+    func countNodes(label: String) throws  -> UInt64
+    
+    /**
      * Creates a directed edge between two existing nodes.
      */
     func createEdge(from: UInt64, edgeType: String, to: UInt64, properties: [String: FfiPropValue]) throws  -> UInt64
@@ -665,6 +693,12 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func createEdgesBulk(edges: [FfiEdgeInput]) throws  -> [UInt64]
     
     /**
+     * Builds a full-text (BM25) index over a text column, backfilling
+     * existing rows; `false` if it already exists.
+     */
+    func createFulltextIndex(table: String, column: String) throws  -> Bool
+    
+    /**
      * Adds a (backfilled) secondary index.
      */
     func createIndex(table: String, column: String) throws 
@@ -673,6 +707,12 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      * Creates a single graph node with the given label and properties.
      */
     func createNode(label: String, properties: [String: FfiPropValue]) throws  -> UInt64
+    
+    /**
+     * Indexes `property` of nodes with `label` (backfilled immediately;
+     * only Int/Str values are indexed). Returns `false` if it already existed.
+     */
+    func createNodeIndex(label: String, property: String) throws  -> Bool
     
     /**
      * Creates multiple nodes in a single atomic transaction.
@@ -705,7 +745,11 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func deleteRows(table: String, query: FfiQuery) throws  -> UInt64
     
+    func dropFulltextIndex(table: String, column: String) throws  -> Bool
+    
     func dropIndex(table: String, column: String) throws 
+    
+    func dropNodeIndex(label: String, property: String) throws  -> Bool
     
     /**
      * Deletes a table and all its rows; returns whether it existed.
@@ -719,9 +763,23 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func ensureTable(schema: FfiTableSchema) throws 
     
     /**
+     * Ids of nodes with `label` whose `property` equals `value`, ascending.
+     * A lookup when the property is indexed (`create_node_index`), else a
+     * scan of the label's nodes.
+     */
+    func findNodes(label: String, property: String, value: FfiPropValue) throws  -> [UInt64]
+    
+    /**
      * Computes the unweighted shortest path between `start` and `target` using BFS.
      */
     func findShortestPath(start: UInt64, target: UInt64, direction: FfiDirection, edgeTypes: [String]?) throws  -> FfiPathResult?
+    
+    /**
+     * Lowest-cost path (Dijkstra): each edge costs its numeric
+     * `weight_property`, or `default_weight` when it has none. Weights must
+     * be non-negative.
+     */
+    func findWeightedPath(start: UInt64, target: UInt64, direction: FfiDirection, edgeTypes: [String]?, weightProperty: String, defaultWeight: Double) throws  -> FfiWeightedPath?
     
     /**
      * Retrieves an edge by its numeric ID.
@@ -736,6 +794,12 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func getRow(table: String, pk: FfiPropValue) throws  -> FfiRow?
     
     /**
+     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+     */
+    func graphQuery(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
+    
+    /**
      * Inserts a row; returns its primary key (generated for auto-increment
      * tables). Fails with `DuplicateKey` if the key is taken.
      */
@@ -744,6 +808,10 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func insertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
     
     func isClosed()  -> Bool
+    
+    func listFulltextIndexes(table: String) throws  -> [String]
+    
+    func listNodeIndexes() throws  -> [FfiPropertyIndex]
     
     func listTables() throws  -> [FfiTableSchema]
     
@@ -763,7 +831,44 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
      */
     func neighborsOut(node: UInt64, edgeType: String) throws  -> [FfiNeighbor]
     
+    /**
+     * Ids of every node with `label`, ascending.
+     */
+    func nodesByLabel(label: String) throws  -> [UInt64]
+    
+    /**
+     * Rebuilds every graph index. Only needed once for databases created
+     * by versions without graph indexes (lookups work without it, but scan).
+     */
+    func rebuildGraphIndexes() throws 
+    
+    /**
+     * Up to `limit` rows whose `column` best matches `query` (BM25).
+     * `word*` is a prefix match; `match_all` requires every word.
+     */
+    func searchText(table: String, column: String, query: String, limit: UInt32, matchAll: Bool, filter: [FfiExprNode]) throws  -> [FfiScoredRow]
+    
+    /**
+     * The `limit` rows whose embedding in `column` (a list of numbers, or
+     * bytes of little-endian f32s) is nearest to `vector`.
+     */
+    func searchVector(table: String, column: String, vector: [Float], limit: UInt32, metric: FfiVectorMetric, filter: [FfiExprNode]) throws  -> [FfiScoredRow]
+    
     func select(table: String, query: FfiQuery) throws  -> [FfiRow]
+    
+    /**
+     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+     * a `SELECT` against a snapshot, anything else in its own atomic write
+     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+     * `named`.
+     */
+    func sql(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
+    
+    /**
+     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
+     * storage figures for on-disk databases.
+     */
+    func stats() throws  -> FfiDbStats
     
     /**
      * Ingests graph nodes, edges and relational rows (upserted by primary
@@ -808,6 +913,12 @@ public protocol BknDbEngineProtocol: AnyObject, Sendable {
     func upsert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
     
     func upsertMany(table: String, rows: [[String: FfiPropValue]]) throws  -> [FfiPropValue]
+    
+    /**
+     * Re-reads and checksums every stored byte, failing with `Corruption`
+     * on the first damaged structure.
+     */
+    func verifyIntegrity() throws  -> FfiIntegrityReport
     
 }
 /**
@@ -921,6 +1032,20 @@ open func aggregate(table: String, query: FfiQuery, groupBy: [String], aggregate
 }
     
     /**
+     * Writes a consistent, compacted copy of everything committed so far to
+     * a new file at `dest` (which must not exist), without blocking readers
+     * or writers. On-disk databases only.
+     */
+open func backup(dest: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_backup(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(dest),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Opens an explicit write transaction. Only one can be open at a time;
      * while it is, writes through the engine itself fail with
      * `TransactionInProgress` (reads keep working on the last committed state).
@@ -984,6 +1109,19 @@ open func count(table: String, query: FfiQuery)throws  -> UInt64  {
 }
     
     /**
+     * Number of nodes with `label`.
+     */
+open func countNodes(label: String)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_count_nodes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Creates a directed edge between two existing nodes.
      */
 open func createEdge(from: UInt64, edgeType: String, to: UInt64, properties: [String: FfiPropValue])throws  -> UInt64  {
@@ -1013,6 +1151,21 @@ open func createEdgesBulk(edges: [FfiEdgeInput])throws  -> [UInt64]  {
 }
     
     /**
+     * Builds a full-text (BM25) index over a text column, backfilling
+     * existing rows; `false` if it already exists.
+     */
+open func createFulltextIndex(table: String, column: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Adds a (backfilled) secondary index.
      */
 open func createIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
@@ -1035,6 +1188,21 @@ open func createNode(label: String, properties: [String: FfiPropValue])throws  -
             self.uniffiCloneHandle(),
         FfiConverterString.lower(label),
         FfiConverterDictionaryStringTypeFfiPropValue.lower(properties),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Indexes `property` of nodes with `label` (backfilled immediately;
+     * only Int/Str values are indexed). Returns `false` if it already existed.
+     */
+open func createNodeIndex(label: String, property: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_create_node_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),
+        FfiConverterString.lower(property),uniffiCallStatus
     )
 })
 }
@@ -1120,6 +1288,17 @@ open func deleteRows(table: String, query: FfiQuery)throws  -> UInt64  {
 })
 }
     
+open func dropFulltextIndex(table: String, column: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),uniffiCallStatus
+    )
+})
+}
+    
 open func dropIndex(table: String, column: String)throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
     uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(
@@ -1128,6 +1307,17 @@ open func dropIndex(table: String, column: String)throws   {try rustCallWithErro
         FfiConverterString.lower(column),uniffiCallStatus
     )
 }
+}
+    
+open func dropNodeIndex(label: String, property: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_drop_node_index(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),
+        FfiConverterString.lower(property),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -1157,6 +1347,23 @@ open func ensureTable(schema: FfiTableSchema)throws   {try rustCallWithError(Ffi
 }
     
     /**
+     * Ids of nodes with `label` whose `property` equals `value`, ascending.
+     * A lookup when the property is indexed (`create_node_index`), else a
+     * scan of the label's nodes.
+     */
+open func findNodes(label: String, property: String, value: FfiPropValue)throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_find_nodes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),
+        FfiConverterString.lower(property),
+        FfiConverterTypeFfiPropValue_lower(value),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Computes the unweighted shortest path between `start` and `target` using BFS.
      */
 open func findShortestPath(start: UInt64, target: UInt64, direction: FfiDirection, edgeTypes: [String]?)throws  -> FfiPathResult?  {
@@ -1168,6 +1375,26 @@ open func findShortestPath(start: UInt64, target: UInt64, direction: FfiDirectio
         FfiConverterUInt64.lower(target),
         FfiConverterTypeFfiDirection_lower(direction),
         FfiConverterOptionSequenceString.lower(edgeTypes),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Lowest-cost path (Dijkstra): each edge costs its numeric
+     * `weight_property`, or `default_weight` when it has none. Weights must
+     * be non-negative.
+     */
+open func findWeightedPath(start: UInt64, target: UInt64, direction: FfiDirection, edgeTypes: [String]?, weightProperty: String, defaultWeight: Double)throws  -> FfiWeightedPath?  {
+    return try  FfiConverterOptionTypeFfiWeightedPath.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_find_weighted_path(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(start),
+        FfiConverterUInt64.lower(target),
+        FfiConverterTypeFfiDirection_lower(direction),
+        FfiConverterOptionSequenceString.lower(edgeTypes),
+        FfiConverterString.lower(weightProperty),
+        FfiConverterDouble.lower(defaultWeight),uniffiCallStatus
     )
 })
 }
@@ -1210,6 +1437,22 @@ open func getRow(table: String, pk: FfiPropValue)throws  -> FfiRow?  {
 }
     
     /**
+     * Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+     * Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+     */
+open func graphQuery(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
+    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterSequenceTypeFfiPropValue.lower(positional),
+        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Inserts a row; returns its primary key (generated for auto-increment
      * tables). Fails with `DuplicateKey` if the key is taken.
      */
@@ -1239,6 +1482,25 @@ open func isClosed() -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func listFulltextIndexes(table: String)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),uniffiCallStatus
+    )
+})
+}
+    
+open func listNodeIndexes()throws  -> [FfiPropertyIndex]  {
+    return try  FfiConverterSequenceTypeFfiPropertyIndex.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_list_node_indexes(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -1297,6 +1559,69 @@ open func neighborsOut(node: UInt64, edgeType: String)throws  -> [FfiNeighbor]  
 })
 }
     
+    /**
+     * Ids of every node with `label`, ascending.
+     */
+open func nodesByLabel(label: String)throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_nodes_by_label(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Rebuilds every graph index. Only needed once for databases created
+     * by versions without graph indexes (lookups work without it, but scan).
+     */
+open func rebuildGraphIndexes()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_rebuild_graph_indexes(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Up to `limit` rows whose `column` best matches `query` (BM25).
+     * `word*` is a prefix match; `match_all` requires every word.
+     */
+open func searchText(table: String, column: String, query: String, limit: UInt32, matchAll: Bool = false, filter: [FfiExprNode] = [])throws  -> [FfiScoredRow]  {
+    return try  FfiConverterSequenceTypeFfiScoredRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterBool.lower(matchAll),
+        FfiConverterSequenceTypeFfiExprNode.lower(filter),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The `limit` rows whose embedding in `column` (a list of numbers, or
+     * bytes of little-endian f32s) is nearest to `vector`.
+     */
+open func searchVector(table: String, column: String, vector: [Float], limit: UInt32, metric: FfiVectorMetric, filter: [FfiExprNode] = [])throws  -> [FfiScoredRow]  {
+    return try  FfiConverterSequenceTypeFfiScoredRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(table),
+        FfiConverterString.lower(column),
+        FfiConverterSequenceFloat.lower(vector),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterTypeFfiVectorMetric_lower(metric),
+        FfiConverterSequenceTypeFfiExprNode.lower(filter),uniffiCallStatus
+    )
+})
+}
+    
 open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
     return try  FfiConverterSequenceTypeFfiRow.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
@@ -1304,6 +1629,37 @@ open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(table),
         FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+     * a `SELECT` against a snapshot, anything else in its own atomic write
+     * transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+     * `named`.
+     */
+open func sql(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
+    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_sql(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterSequenceTypeFfiPropValue.lower(positional),
+        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Node/edge/row counts (by scanning, from one snapshot) plus file-level
+     * storage figures for on-disk databases.
+     */
+open func stats()throws  -> FfiDbStats  {
+    return try  FfiConverterTypeFfiDbStats_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_stats(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1436,6 +1792,19 @@ open func upsertMany(table: String, rows: [[String: FfiPropValue]])throws  -> [F
 })
 }
     
+    /**
+     * Re-reads and checksums every stored byte, failing with `Corruption`
+     * on the first damaged structure.
+     */
+open func verifyIntegrity()throws  -> FfiIntegrityReport  {
+    return try  FfiConverterTypeFfiIntegrityReport_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
 
     
 }
@@ -1522,11 +1891,19 @@ public protocol BknDbTransactionProtocol: AnyObject, Sendable {
     
     func ensureTable(schema: FfiTableSchema) throws 
     
+    func findNodes(label: String, property: String, value: FfiPropValue) throws  -> [UInt64]
+    
     func getEdge(id: UInt64) throws  -> FfiEdgeRecord?
     
     func getNode(id: UInt64) throws  -> FfiNodeRecord?
     
     func getRow(table: String, pk: FfiPropValue) throws  -> FfiRow?
+    
+    /**
+     * Runs a graph `MATCH` query inside this transaction. See
+     * `BknDbEngine::graph_query`.
+     */
+    func graphQuery(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
     
     func insert(table: String, values: [String: FfiPropValue]) throws  -> FfiPropValue
     
@@ -1540,11 +1917,22 @@ public protocol BknDbTransactionProtocol: AnyObject, Sendable {
     func neighbors(node: UInt64, direction: FfiDirection, edgeType: String?) throws  -> [FfiTypedNeighbor]
     
     /**
+     * Ids of every node with `label` (including ones created in this transaction).
+     */
+    func nodesByLabel(label: String) throws  -> [UInt64]
+    
+    /**
      * Discards every write of this transaction.
      */
     func rollback() throws 
     
     func select(table: String, query: FfiQuery) throws  -> [FfiRow]
+    
+    /**
+     * Runs one SQL statement inside this transaction (it sees the
+     * transaction's own writes). See `BknDbEngine::sql`.
+     */
+    func sql(query: String, positional: [FfiPropValue], named: [String: FfiPropValue]?) throws  -> FfiQueryResult
     
     func updateEdgeProperties(id: UInt64, set: [String: FfiPropValue], unset: [String]) throws 
     
@@ -1742,6 +2130,18 @@ open func ensureTable(schema: FfiTableSchema)throws   {try rustCallWithError(Ffi
 }
 }
     
+open func findNodes(label: String, property: String, value: FfiPropValue)throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_find_nodes(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),
+        FfiConverterString.lower(property),
+        FfiConverterTypeFfiPropValue_lower(value),uniffiCallStatus
+    )
+})
+}
+    
 open func getEdge(id: UInt64)throws  -> FfiEdgeRecord?  {
     return try  FfiConverterOptionTypeFfiEdgeRecord.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
         uniffiCallStatus in
@@ -1769,6 +2169,22 @@ open func getRow(table: String, pk: FfiPropValue)throws  -> FfiRow?  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(table),
         FfiConverterTypeFfiPropValue_lower(pk),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Runs a graph `MATCH` query inside this transaction. See
+     * `BknDbEngine::graph_query`.
+     */
+open func graphQuery(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
+    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_graph_query(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterSequenceTypeFfiPropValue.lower(positional),
+        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
     )
 })
 }
@@ -1820,6 +2236,19 @@ open func neighbors(node: UInt64, direction: FfiDirection, edgeType: String?)thr
 }
     
     /**
+     * Ids of every node with `label` (including ones created in this transaction).
+     */
+open func nodesByLabel(label: String)throws  -> [UInt64]  {
+    return try  FfiConverterSequenceUInt64.lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_nodes_by_label(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(label),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Discards every write of this transaction.
      */
 open func rollback()throws   {try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
@@ -1837,6 +2266,22 @@ open func select(table: String, query: FfiQuery)throws  -> [FfiRow]  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(table),
         FfiConverterTypeFfiQuery_lower(query),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Runs one SQL statement inside this transaction (it sees the
+     * transaction's own writes). See `BknDbEngine::sql`.
+     */
+open func sql(query: String, positional: [FfiPropValue] = [], named: [String: FfiPropValue]? = nil)throws  -> FfiQueryResult  {
+    return try  FfiConverterTypeFfiQueryResult_lift(try rustCallWithError(FfiConverterTypeFfiBknError_lift) {
+        uniffiCallStatus in
+    uniffi_bkndb_ffi_fn_method_bkndbtransaction_sql(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterSequenceTypeFfiPropValue.lower(positional),
+        FfiConverterOptionDictionaryStringTypeFfiPropValue.lower(named),uniffiCallStatus
     )
 })
 }
@@ -2119,6 +2564,77 @@ public func FfiConverterTypeFfiColumn_lower(_ value: FfiColumn) -> RustBuffer {
 }
 
 
+/**
+ * Logical counts plus, for on-disk databases, storage figures.
+ */
+public struct FfiDbStats: Equatable, Hashable {
+    public var nodes: UInt64
+    public var edges: UInt64
+    public var tables: [FfiTableCount]
+    /**
+     * `None` for in-memory databases.
+     */
+    public var storage: FfiStorageStats?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(nodes: UInt64, edges: UInt64, tables: [FfiTableCount], 
+        /**
+         * `None` for in-memory databases.
+         */storage: FfiStorageStats?) {
+        self.nodes = nodes
+        self.edges = edges
+        self.tables = tables
+        self.storage = storage
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiDbStats: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDbStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDbStats {
+        return
+            try FfiDbStats(
+                nodes: FfiConverterUInt64.read(from: &buf), 
+                edges: FfiConverterUInt64.read(from: &buf), 
+                tables: FfiConverterSequenceTypeFfiTableCount.read(from: &buf), 
+                storage: FfiConverterOptionTypeFfiStorageStats.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDbStats, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.nodes, into: &buf)
+        FfiConverterUInt64.write(value.edges, into: &buf)
+        FfiConverterSequenceTypeFfiTableCount.write(value.tables, into: &buf)
+        FfiConverterOptionTypeFfiStorageStats.write(value.storage, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDbStats_lift(_ buf: RustBuffer) throws -> FfiDbStats {
+    return try FfiConverterTypeFfiDbStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDbStats_lower(_ value: FfiDbStats) -> RustBuffer {
+    return FfiConverterTypeFfiDbStats.lower(value)
+}
+
+
 public struct FfiEdgeInput: Equatable, Hashable {
     public var from: UInt64
     public var edgeType: String
@@ -2369,6 +2885,137 @@ public func FfiConverterTypeFfiHubRecord_lower(_ value: FfiHubRecord) -> RustBuf
 
 
 /**
+ * What `verify_integrity` checked (all zero for in-memory databases).
+ */
+public struct FfiIntegrityReport: Equatable, Hashable {
+    public var sstablesChecked: UInt32
+    public var blocksVerified: UInt64
+    public var legacyBlocksUnchecked: UInt64
+    public var entries: UInt64
+    public var walRecords: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sstablesChecked: UInt32, blocksVerified: UInt64, legacyBlocksUnchecked: UInt64, entries: UInt64, walRecords: UInt64) {
+        self.sstablesChecked = sstablesChecked
+        self.blocksVerified = blocksVerified
+        self.legacyBlocksUnchecked = legacyBlocksUnchecked
+        self.entries = entries
+        self.walRecords = walRecords
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiIntegrityReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiIntegrityReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiIntegrityReport {
+        return
+            try FfiIntegrityReport(
+                sstablesChecked: FfiConverterUInt32.read(from: &buf), 
+                blocksVerified: FfiConverterUInt64.read(from: &buf), 
+                legacyBlocksUnchecked: FfiConverterUInt64.read(from: &buf), 
+                entries: FfiConverterUInt64.read(from: &buf), 
+                walRecords: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiIntegrityReport, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sstablesChecked, into: &buf)
+        FfiConverterUInt64.write(value.blocksVerified, into: &buf)
+        FfiConverterUInt64.write(value.legacyBlocksUnchecked, into: &buf)
+        FfiConverterUInt64.write(value.entries, into: &buf)
+        FfiConverterUInt64.write(value.walRecords, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiIntegrityReport_lift(_ buf: RustBuffer) throws -> FfiIntegrityReport {
+    return try FfiConverterTypeFfiIntegrityReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiIntegrityReport_lower(_ value: FfiIntegrityReport) -> RustBuffer {
+    return FfiConverterTypeFfiIntegrityReport.lower(value)
+}
+
+
+public struct FfiLinkedEdgeInput: Equatable, Hashable {
+    public var from: FfiNodeRef
+    public var edgeType: String
+    public var to: FfiNodeRef
+    public var properties: [String: FfiPropValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(from: FfiNodeRef, edgeType: String, to: FfiNodeRef, properties: [String: FfiPropValue] = [:]) {
+        self.from = from
+        self.edgeType = edgeType
+        self.to = to
+        self.properties = properties
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiLinkedEdgeInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLinkedEdgeInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLinkedEdgeInput {
+        return
+            try FfiLinkedEdgeInput(
+                from: FfiConverterTypeFfiNodeRef.read(from: &buf), 
+                edgeType: FfiConverterString.read(from: &buf), 
+                to: FfiConverterTypeFfiNodeRef.read(from: &buf), 
+                properties: FfiConverterDictionaryStringTypeFfiPropValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiLinkedEdgeInput, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiNodeRef.write(value.from, into: &buf)
+        FfiConverterString.write(value.edgeType, into: &buf)
+        FfiConverterTypeFfiNodeRef.write(value.to, into: &buf)
+        FfiConverterDictionaryStringTypeFfiPropValue.write(value.properties, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLinkedEdgeInput_lift(_ buf: RustBuffer) throws -> FfiLinkedEdgeInput {
+    return try FfiConverterTypeFfiLinkedEdgeInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLinkedEdgeInput_lower(_ value: FfiLinkedEdgeInput) -> RustBuffer {
+    return FfiConverterTypeFfiLinkedEdgeInput.lower(value)
+}
+
+
+/**
  * Tuning knobs for the on-disk (LSM) engine.
  */
 public struct FfiLsmOptions: Equatable, Hashable {
@@ -2380,6 +3027,15 @@ public struct FfiLsmOptions: Equatable, Hashable {
      * Compact automatically once this many on-disk segments exist.
      */
     public var compactionTriggerFiles: UInt32
+    /**
+     * Target size of one on-disk block (the unit that is checksummed,
+     * compressed and read per lookup). Default 4096.
+     */
+    public var blockSizeBytes: UInt32?
+    /**
+     * lz4-compress on-disk blocks. Default true.
+     */
+    public var compression: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2389,9 +3045,18 @@ public struct FfiLsmOptions: Equatable, Hashable {
          */memtableFlushBytes: UInt64, 
         /**
          * Compact automatically once this many on-disk segments exist.
-         */compactionTriggerFiles: UInt32) {
+         */compactionTriggerFiles: UInt32, 
+        /**
+         * Target size of one on-disk block (the unit that is checksummed,
+         * compressed and read per lookup). Default 4096.
+         */blockSizeBytes: UInt32? = nil, 
+        /**
+         * lz4-compress on-disk blocks. Default true.
+         */compression: Bool? = nil) {
         self.memtableFlushBytes = memtableFlushBytes
         self.compactionTriggerFiles = compactionTriggerFiles
+        self.blockSizeBytes = blockSizeBytes
+        self.compression = compression
     }
 
     
@@ -2411,13 +3076,17 @@ public struct FfiConverterTypeFfiLsmOptions: FfiConverterRustBuffer {
         return
             try FfiLsmOptions(
                 memtableFlushBytes: FfiConverterUInt64.read(from: &buf), 
-                compactionTriggerFiles: FfiConverterUInt32.read(from: &buf)
+                compactionTriggerFiles: FfiConverterUInt32.read(from: &buf), 
+                blockSizeBytes: FfiConverterOptionUInt32.read(from: &buf), 
+                compression: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiLsmOptions, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.memtableFlushBytes, into: &buf)
         FfiConverterUInt32.write(value.compactionTriggerFiles, into: &buf)
+        FfiConverterOptionUInt32.write(value.blockSizeBytes, into: &buf)
+        FfiConverterOptionBool.write(value.compression, into: &buf)
     }
 }
 
@@ -2773,6 +3442,63 @@ public func FfiConverterTypeFfiPathStep_lower(_ value: FfiPathStep) -> RustBuffe
 }
 
 
+/**
+ * An index on `property` of nodes with `label`.
+ */
+public struct FfiPropertyIndex: Equatable, Hashable {
+    public var label: String
+    public var property: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, property: String) {
+        self.label = label
+        self.property = property
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPropertyIndex: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPropertyIndex: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPropertyIndex {
+        return
+            try FfiPropertyIndex(
+                label: FfiConverterString.read(from: &buf), 
+                property: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPropertyIndex, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.property, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPropertyIndex_lift(_ buf: RustBuffer) throws -> FfiPropertyIndex {
+    return try FfiConverterTypeFfiPropertyIndex.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPropertyIndex_lower(_ value: FfiPropertyIndex) -> RustBuffer {
+    return FfiConverterTypeFfiPropertyIndex.lower(value)
+}
+
+
 public struct FfiQuery: Equatable, Hashable {
     public var filter: [FfiExprNode]
     public var orderBy: [FfiOrder]
@@ -2845,6 +3571,73 @@ public func FfiConverterTypeFfiQuery_lower(_ value: FfiQuery) -> RustBuffer {
 }
 
 
+/**
+ * Tabular result of a SQL statement or graph query.
+ */
+public struct FfiQueryResult: Equatable, Hashable {
+    public var columns: [String]
+    public var rows: [[FfiPropValue]]
+    /**
+     * Rows inserted/updated/deleted (0 for queries).
+     */
+    public var affected: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(columns: [String], rows: [[FfiPropValue]], 
+        /**
+         * Rows inserted/updated/deleted (0 for queries).
+         */affected: UInt64) {
+        self.columns = columns
+        self.rows = rows
+        self.affected = affected
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiQueryResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiQueryResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiQueryResult {
+        return
+            try FfiQueryResult(
+                columns: FfiConverterSequenceString.read(from: &buf), 
+                rows: FfiConverterSequenceSequenceTypeFfiPropValue.read(from: &buf), 
+                affected: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiQueryResult, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.columns, into: &buf)
+        FfiConverterSequenceSequenceTypeFfiPropValue.write(value.rows, into: &buf)
+        FfiConverterUInt64.write(value.affected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQueryResult_lift(_ buf: RustBuffer) throws -> FfiQueryResult {
+    return try FfiConverterTypeFfiQueryResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQueryResult_lower(_ value: FfiQueryResult) -> RustBuffer {
+    return FfiConverterTypeFfiQueryResult.lower(value)
+}
+
+
 public struct FfiRow: Equatable, Hashable {
     public var pk: FfiPropValue
     public var values: [String: FfiPropValue]
@@ -2899,6 +3692,149 @@ public func FfiConverterTypeFfiRow_lower(_ value: FfiRow) -> RustBuffer {
 }
 
 
+/**
+ * A search hit: the row and its score (BM25 for text; for vectors the
+ * cosine similarity, dot product or Euclidean distance).
+ */
+public struct FfiScoredRow: Equatable, Hashable {
+    public var row: FfiRow
+    public var score: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(row: FfiRow, score: Double) {
+        self.row = row
+        self.score = score
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiScoredRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiScoredRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiScoredRow {
+        return
+            try FfiScoredRow(
+                row: FfiConverterTypeFfiRow.read(from: &buf), 
+                score: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiScoredRow, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiRow.write(value.row, into: &buf)
+        FfiConverterDouble.write(value.score, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiScoredRow_lift(_ buf: RustBuffer) throws -> FfiScoredRow {
+    return try FfiConverterTypeFfiScoredRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiScoredRow_lower(_ value: FfiScoredRow) -> RustBuffer {
+    return FfiConverterTypeFfiScoredRow.lower(value)
+}
+
+
+/**
+ * File-level figures for an on-disk database (see `LsmStats`).
+ */
+public struct FfiStorageStats: Equatable, Hashable {
+    public var fileBytes: UInt64
+    public var sstableCount: UInt32
+    public var legacySstableCount: UInt32
+    public var sstableBytes: UInt64
+    public var sstableEntries: UInt64
+    public var memtableEntries: UInt64
+    public var memtableBytes: UInt64
+    public var walBytes: UInt64
+    public var reclaimableBytes: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(fileBytes: UInt64, sstableCount: UInt32, legacySstableCount: UInt32, sstableBytes: UInt64, sstableEntries: UInt64, memtableEntries: UInt64, memtableBytes: UInt64, walBytes: UInt64, reclaimableBytes: UInt64) {
+        self.fileBytes = fileBytes
+        self.sstableCount = sstableCount
+        self.legacySstableCount = legacySstableCount
+        self.sstableBytes = sstableBytes
+        self.sstableEntries = sstableEntries
+        self.memtableEntries = memtableEntries
+        self.memtableBytes = memtableBytes
+        self.walBytes = walBytes
+        self.reclaimableBytes = reclaimableBytes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiStorageStats: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiStorageStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiStorageStats {
+        return
+            try FfiStorageStats(
+                fileBytes: FfiConverterUInt64.read(from: &buf), 
+                sstableCount: FfiConverterUInt32.read(from: &buf), 
+                legacySstableCount: FfiConverterUInt32.read(from: &buf), 
+                sstableBytes: FfiConverterUInt64.read(from: &buf), 
+                sstableEntries: FfiConverterUInt64.read(from: &buf), 
+                memtableEntries: FfiConverterUInt64.read(from: &buf), 
+                memtableBytes: FfiConverterUInt64.read(from: &buf), 
+                walBytes: FfiConverterUInt64.read(from: &buf), 
+                reclaimableBytes: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiStorageStats, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.fileBytes, into: &buf)
+        FfiConverterUInt32.write(value.sstableCount, into: &buf)
+        FfiConverterUInt32.write(value.legacySstableCount, into: &buf)
+        FfiConverterUInt64.write(value.sstableBytes, into: &buf)
+        FfiConverterUInt64.write(value.sstableEntries, into: &buf)
+        FfiConverterUInt64.write(value.memtableEntries, into: &buf)
+        FfiConverterUInt64.write(value.memtableBytes, into: &buf)
+        FfiConverterUInt64.write(value.walBytes, into: &buf)
+        FfiConverterUInt64.write(value.reclaimableBytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiStorageStats_lift(_ buf: RustBuffer) throws -> FfiStorageStats {
+    return try FfiConverterTypeFfiStorageStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiStorageStats_lower(_ value: FfiStorageStats) -> RustBuffer {
+    return FfiConverterTypeFfiStorageStats.lower(value)
+}
+
+
 public struct FfiSyncBatch: Equatable, Hashable {
     public var nodes: [FfiNodeInput]
     public var edges: [FfiEdgeInput]
@@ -2906,16 +3842,24 @@ public struct FfiSyncBatch: Equatable, Hashable {
      * Relational rows, upserted by primary key (so a batch can be re-applied).
      */
     public var rows: [FfiTableRows]
+    /**
+     * Edges that may connect nodes created by this same batch.
+     */
+    public var linkedEdges: [FfiLinkedEdgeInput]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(nodes: [FfiNodeInput], edges: [FfiEdgeInput], 
         /**
          * Relational rows, upserted by primary key (so a batch can be re-applied).
-         */rows: [FfiTableRows] = []) {
+         */rows: [FfiTableRows] = [], 
+        /**
+         * Edges that may connect nodes created by this same batch.
+         */linkedEdges: [FfiLinkedEdgeInput] = []) {
         self.nodes = nodes
         self.edges = edges
         self.rows = rows
+        self.linkedEdges = linkedEdges
     }
 
     
@@ -2936,7 +3880,8 @@ public struct FfiConverterTypeFfiSyncBatch: FfiConverterRustBuffer {
             try FfiSyncBatch(
                 nodes: FfiConverterSequenceTypeFfiNodeInput.read(from: &buf), 
                 edges: FfiConverterSequenceTypeFfiEdgeInput.read(from: &buf), 
-                rows: FfiConverterSequenceTypeFfiTableRows.read(from: &buf)
+                rows: FfiConverterSequenceTypeFfiTableRows.read(from: &buf), 
+                linkedEdges: FfiConverterSequenceTypeFfiLinkedEdgeInput.read(from: &buf)
         )
     }
 
@@ -2944,6 +3889,7 @@ public struct FfiConverterTypeFfiSyncBatch: FfiConverterRustBuffer {
         FfiConverterSequenceTypeFfiNodeInput.write(value.nodes, into: &buf)
         FfiConverterSequenceTypeFfiEdgeInput.write(value.edges, into: &buf)
         FfiConverterSequenceTypeFfiTableRows.write(value.rows, into: &buf)
+        FfiConverterSequenceTypeFfiLinkedEdgeInput.write(value.linkedEdges, into: &buf)
     }
 }
 
@@ -3024,6 +3970,63 @@ public func FfiConverterTypeFfiSyncResult_lift(_ buf: RustBuffer) throws -> FfiS
 #endif
 public func FfiConverterTypeFfiSyncResult_lower(_ value: FfiSyncResult) -> RustBuffer {
     return FfiConverterTypeFfiSyncResult.lower(value)
+}
+
+
+/**
+ * Row count of one relational table.
+ */
+public struct FfiTableCount: Equatable, Hashable {
+    public var table: String
+    public var rows: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(table: String, rows: UInt64) {
+        self.table = table
+        self.rows = rows
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTableCount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableCount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableCount {
+        return
+            try FfiTableCount(
+                table: FfiConverterString.read(from: &buf), 
+                rows: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableCount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.table, into: &buf)
+        FfiConverterUInt64.write(value.rows, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableCount_lift(_ buf: RustBuffer) throws -> FfiTableCount {
+    return try FfiConverterTypeFfiTableCount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableCount_lower(_ value: FfiTableCount) -> RustBuffer {
+    return FfiConverterTypeFfiTableCount.lower(value)
 }
 
 
@@ -3282,6 +4285,63 @@ public func FfiConverterTypeFfiTypedNeighbor_lower(_ value: FfiTypedNeighbor) ->
 }
 
 
+/**
+ * A lowest-cost path and its total cost.
+ */
+public struct FfiWeightedPath: Equatable, Hashable {
+    public var path: FfiPathResult
+    public var cost: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: FfiPathResult, cost: Double) {
+        self.path = path
+        self.cost = cost
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiWeightedPath: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWeightedPath: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWeightedPath {
+        return
+            try FfiWeightedPath(
+                path: FfiConverterTypeFfiPathResult.read(from: &buf), 
+                cost: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWeightedPath, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiPathResult.write(value.path, into: &buf)
+        FfiConverterDouble.write(value.cost, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWeightedPath_lift(_ buf: RustBuffer) throws -> FfiWeightedPath {
+    return try FfiConverterTypeFfiWeightedPath.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWeightedPath_lower(_ value: FfiWeightedPath) -> RustBuffer {
+    return FfiConverterTypeFfiWeightedPath.lower(value)
+}
+
+
 
 public enum FfiAggFunc: Equatable, Hashable {
     
@@ -3404,6 +4464,10 @@ enum FfiBknError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case ConstraintViolation(table: String, message: String
     )
+    case Corruption(message: String
+    )
+    case InvalidQuery(message: String
+    )
     case DatabaseClosed
     case TransactionInProgress
     case TransactionClosed
@@ -3468,13 +4532,19 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
             table: try FfiConverterString.read(from: &buf), 
             message: try FfiConverterString.read(from: &buf)
             )
-        case 10: return .DatabaseClosed
-        case 11: return .TransactionInProgress
-        case 12: return .TransactionClosed
-        case 13: return .TransactionAborted(
+        case 10: return .Corruption(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 14: return .InvalidArgument(
+        case 11: return .InvalidQuery(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 12: return .DatabaseClosed
+        case 13: return .TransactionInProgress
+        case 14: return .TransactionClosed
+        case 15: return .TransactionAborted(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 16: return .InvalidArgument(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -3536,25 +4606,35 @@ public struct FfiConverterTypeFfiBknError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case .DatabaseClosed:
+        case let .Corruption(message):
             writeInt(&buf, Int32(10))
+            FfiConverterString.write(message, into: &buf)
+            
         
-        
-        case .TransactionInProgress:
+        case let .InvalidQuery(message):
             writeInt(&buf, Int32(11))
+            FfiConverterString.write(message, into: &buf)
+            
         
-        
-        case .TransactionClosed:
+        case .DatabaseClosed:
             writeInt(&buf, Int32(12))
         
         
-        case let .TransactionAborted(message):
+        case .TransactionInProgress:
             writeInt(&buf, Int32(13))
+        
+        
+        case .TransactionClosed:
+            writeInt(&buf, Int32(14))
+        
+        
+        case let .TransactionAborted(message):
+            writeInt(&buf, Int32(15))
             FfiConverterString.write(message, into: &buf)
             
         
         case let .InvalidArgument(message):
-            writeInt(&buf, Int32(14))
+            writeInt(&buf, Int32(16))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -3585,6 +4665,10 @@ public enum FfiColumnKind: Equatable, Hashable {
     case float
     case str
     case bytes
+    case timestamp
+    case uuid
+    case list
+    case map
 
 
 
@@ -3616,6 +4700,14 @@ public struct FfiConverterTypeFfiColumnKind: FfiConverterRustBuffer {
         
         case 5: return .bytes
         
+        case 6: return .timestamp
+        
+        case 7: return .uuid
+        
+        case 8: return .list
+        
+        case 9: return .map
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3642,6 +4734,22 @@ public struct FfiConverterTypeFfiColumnKind: FfiConverterRustBuffer {
         
         case .bytes:
             writeInt(&buf, Int32(5))
+        
+        
+        case .timestamp:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .uuid:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .list:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .map:
+            writeInt(&buf, Int32(9))
         
         }
     }
@@ -3768,6 +4876,19 @@ public enum FfiExprOp: Equatable, Hashable {
      * Negation of `children[0]`.
      */
     case not
+    /**
+     * List `column` has an element equal to `values[0]`, string `column`
+     * contains it as a substring, or map `column` has it as a key.
+     */
+    case contains
+    /**
+     * String `column` matches the SQL LIKE pattern `values[0]`.
+     */
+    case like
+    /**
+     * Case-insensitive `Like`.
+     */
+    case iLike
 
 
 
@@ -3814,6 +4935,12 @@ public struct FfiConverterTypeFfiExprOp: FfiConverterRustBuffer {
         case 12: return .or
         
         case 13: return .not
+        
+        case 14: return .contains
+        
+        case 15: return .like
+        
+        case 16: return .iLike
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3874,6 +5001,18 @@ public struct FfiConverterTypeFfiExprOp: FfiConverterRustBuffer {
         case .not:
             writeInt(&buf, Int32(13))
         
+        
+        case .contains:
+            writeInt(&buf, Int32(14))
+        
+        
+        case .like:
+            writeInt(&buf, Int32(15))
+        
+        
+        case .iLike:
+            writeInt(&buf, Int32(16))
+        
         }
     }
 }
@@ -3895,8 +5034,84 @@ public func FfiConverterTypeFfiExprOp_lower(_ value: FfiExprOp) -> RustBuffer {
 
 
 
+/**
+ * An edge endpoint in a sync batch: an existing node, or the node at
+ * `index` (0-based) in the batch's `nodes`.
+ */
 
-public enum FfiPropValue: Equatable, Hashable {
+public enum FfiNodeRef: Equatable, Hashable {
+    
+    case existing(id: UInt64
+    )
+    case new(index: UInt32
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiNodeRef: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNodeRef: FfiConverterRustBuffer {
+    typealias SwiftType = FfiNodeRef
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNodeRef {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .existing(id: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 2: return .new(index: try FfiConverterUInt32.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiNodeRef, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .existing(id):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt64.write(id, into: &buf)
+            
+        
+        case let .new(index):
+            writeInt(&buf, Int32(2))
+            FfiConverterUInt32.write(index, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNodeRef_lift(_ buf: RustBuffer) throws -> FfiNodeRef {
+    return try FfiConverterTypeFfiNodeRef.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNodeRef_lower(_ value: FfiNodeRef) -> RustBuffer {
+    return FfiConverterTypeFfiNodeRef.lower(value)
+}
+
+
+
+
+public indirect enum FfiPropValue: Equatable, Hashable {
     
     case null
     case str(String
@@ -3908,6 +5123,20 @@ public enum FfiPropValue: Equatable, Hashable {
     case bool(Bool
     )
     case bytes(Data
+    )
+    /**
+     * Microseconds since the Unix epoch, UTC.
+     */
+    case timestamp(Int64
+    )
+    /**
+     * A UUID as two big-endian halves (`hi` = first 8 bytes).
+     */
+    case uuid(hi: UInt64, lo: UInt64
+    )
+    case list([FfiPropValue]
+    )
+    case map([String: FfiPropValue]
     )
 
 
@@ -3947,6 +5176,18 @@ public struct FfiConverterTypeFfiPropValue: FfiConverterRustBuffer {
         case 6: return .bytes(try FfiConverterData.read(from: &buf)
         )
         
+        case 7: return .timestamp(try FfiConverterInt64.read(from: &buf)
+        )
+        
+        case 8: return .uuid(hi: try FfiConverterUInt64.read(from: &buf), lo: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 9: return .list(try FfiConverterSequenceTypeFfiPropValue.read(from: &buf)
+        )
+        
+        case 10: return .map(try FfiConverterDictionaryStringTypeFfiPropValue.read(from: &buf)
+        )
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -3983,6 +5224,27 @@ public struct FfiConverterTypeFfiPropValue: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
             FfiConverterData.write(v1, into: &buf)
             
+        
+        case let .timestamp(v1):
+            writeInt(&buf, Int32(7))
+            FfiConverterInt64.write(v1, into: &buf)
+            
+        
+        case let .uuid(hi,lo):
+            writeInt(&buf, Int32(8))
+            FfiConverterUInt64.write(hi, into: &buf)
+            FfiConverterUInt64.write(lo, into: &buf)
+            
+        
+        case let .list(v1):
+            writeInt(&buf, Int32(9))
+            FfiConverterSequenceTypeFfiPropValue.write(v1, into: &buf)
+            
+        
+        case let .map(v1):
+            writeInt(&buf, Int32(10))
+            FfiConverterDictionaryStringTypeFfiPropValue.write(v1, into: &buf)
+            
         }
     }
 }
@@ -4003,6 +5265,112 @@ public func FfiConverterTypeFfiPropValue_lower(_ value: FfiPropValue) -> RustBuf
 }
 
 
+
+
+public enum FfiVectorMetric: Equatable, Hashable {
+    
+    /**
+     * Cosine similarity, highest first.
+     */
+    case cosine
+    /**
+     * Dot product, highest first.
+     */
+    case dot
+    /**
+     * Euclidean distance, lowest first.
+     */
+    case euclidean
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiVectorMetric: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiVectorMetric: FfiConverterRustBuffer {
+    typealias SwiftType = FfiVectorMetric
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiVectorMetric {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .cosine
+        
+        case 2: return .dot
+        
+        case 3: return .euclidean
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiVectorMetric, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .cosine:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .dot:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .euclidean:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiVectorMetric_lift(_ buf: RustBuffer) throws -> FfiVectorMetric {
+    return try FfiConverterTypeFfiVectorMetric.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiVectorMetric_lower(_ value: FfiVectorMetric) -> RustBuffer {
+    return FfiConverterTypeFfiVectorMetric.lower(value)
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -4022,6 +5390,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4150,6 +5542,30 @@ fileprivate struct FfiConverterOptionTypeFfiRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiStorageStats: FfiConverterRustBuffer {
+    typealias SwiftType = FfiStorageStats?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiStorageStats.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiStorageStats.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiTableSchema: FfiConverterRustBuffer {
     typealias SwiftType = FfiTableSchema?
 
@@ -4166,6 +5582,30 @@ fileprivate struct FfiConverterOptionTypeFfiTableSchema: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiTableSchema.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiWeightedPath: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWeightedPath?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiWeightedPath.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiWeightedPath.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4222,6 +5662,30 @@ fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionDictionaryStringTypeFfiPropValue: FfiConverterRustBuffer {
+    typealias SwiftType = [String: FfiPropValue]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDictionaryStringTypeFfiPropValue.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDictionaryStringTypeFfiPropValue.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
     typealias SwiftType = [UInt32]
 
@@ -4264,6 +5728,31 @@ fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterUInt64.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceFloat: FfiConverterRustBuffer {
+    typealias SwiftType = [Float]
+
+    public static func write(_ value: [Float], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterFloat.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Float] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Float]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterFloat.read(from: &buf))
         }
         return seq
     }
@@ -4447,6 +5936,31 @@ fileprivate struct FfiConverterSequenceTypeFfiHubRecord: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiLinkedEdgeInput: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiLinkedEdgeInput]
+
+    public static func write(_ value: [FfiLinkedEdgeInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiLinkedEdgeInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiLinkedEdgeInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiLinkedEdgeInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiLinkedEdgeInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiNeighbor: FfiConverterRustBuffer {
     typealias SwiftType = [FfiNeighbor]
 
@@ -4547,6 +6061,31 @@ fileprivate struct FfiConverterSequenceTypeFfiPathStep: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiPropertyIndex: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPropertyIndex]
+
+    public static func write(_ value: [FfiPropertyIndex], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPropertyIndex.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPropertyIndex] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPropertyIndex]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPropertyIndex.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer {
     typealias SwiftType = [FfiRow]
 
@@ -4564,6 +6103,56 @@ fileprivate struct FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiScoredRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiScoredRow]
+
+    public static func write(_ value: [FfiScoredRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiScoredRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiScoredRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiScoredRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiScoredRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableCount: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableCount]
+
+    public static func write(_ value: [FfiTableCount], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableCount.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableCount] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableCount]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableCount.read(from: &buf))
         }
         return seq
     }
@@ -4788,6 +6377,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate() != 17739) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_backup() != 17731) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_begin_transaction() != 20627) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4803,16 +6395,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count() != 538) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes() != 28333) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge() != 19597) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk() != 46431) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index() != 48110) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index() != 42108) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node() != 55339) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index() != 17156) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_create_nodes_bulk() != 29999) {
@@ -4833,7 +6434,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows() != 33801) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index() != 11715) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index() != 15048) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index() != 6273) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_table() != 2085) {
@@ -4842,7 +6449,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table() != 27575) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes() != 27470) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path() != 36954) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_find_weighted_path() != 8679) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_edge() != 45481) {
@@ -4854,6 +6467,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row() != 9466) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_graph_query() != 59322) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_insert() != 23042) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4861,6 +6477,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed() != 53864) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes() != 57865) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes() != 6192) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_list_tables() != 21732) {
@@ -4875,7 +6497,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out() != 62954) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_nodes_by_label() != 32913) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes() != 31135) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text() != 2275) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector() != 4355) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_select() != 42895) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sql() != 22552) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_stats() != 27697) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_sync_batch() != 11272) {
@@ -4903,6 +6543,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many() != 7825) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbengine_verify_integrity() != 18796) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_commit() != 11719) {
@@ -4941,6 +6584,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_ensure_table() != 17458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_find_nodes() != 9062) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_edge() != 52532) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4948,6 +6594,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_row() != 41426) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_graph_query() != 1721) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_insert() != 47708) {
@@ -4962,10 +6611,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_neighbors() != 43884) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_nodes_by_label() != 47050) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_rollback() != 59147) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_select() != 31707) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_sql() != 58283) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_bkndb_ffi_checksum_method_bkndbtransaction_update_edge_properties() != 39859) {

@@ -9,7 +9,8 @@ fn tiny_flush_options() -> LsmOptions {
     LsmOptions {
         memtable_flush_bytes: 64,
         compaction_trigger_files: 1000, // compaction triggered manually in these tests
-        sparse_index_interval: 2,
+        block_size_bytes: 64,
+        compression: true,
     }
 }
 

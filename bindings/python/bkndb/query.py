@@ -135,6 +135,24 @@ class Col:
     def startswith(self, prefix: str) -> Expr:
         return _Leaf(FfiExprOp.STARTS_WITH, self.name, (prefix,))
 
+    def contains(self, value: PropertyValue) -> Expr:
+        """List column has an element equal to `value`; str column contains
+        it as a substring; dict column has it as a key."""
+        return _Leaf(FfiExprOp.CONTAINS, self.name, (value,))
+
+    def like(self, pattern: str) -> Expr:
+        """SQL ``LIKE``: ``%`` matches any run of characters, ``_`` one."""
+        return _Leaf(FfiExprOp.LIKE, self.name, (pattern,))
+
+    def ilike(self, pattern: str) -> Expr:
+        """Case-insensitive :meth:`like`."""
+        return _Leaf(FfiExprOp.I_LIKE, self.name, (pattern,))
+
+    def __getitem__(self, key: typing.Union[str, int]) -> "Col":
+        """A path into a dict/list column: ``col("meta")["author"]`` is
+        ``col("meta.author")``, ``col("tags")[0]`` is ``col("tags.0")``."""
+        return Col(f"{self.name}.{key}")
+
     def between(self, low: PropertyValue, high: PropertyValue) -> Expr:
         """Inclusive on both ends, like SQL ``BETWEEN``."""
         return (self >= low) & (self <= high)
@@ -173,6 +191,15 @@ def _order(order_by: OrderBy) -> typing.List[FfiOrder]:
         descending = item.startswith("-")
         out.append(FfiOrder(column=item[1:] if descending else item, descending=descending))
     return out
+
+
+def to_ffi_filter(where: Where) -> typing.List[FfiExprNode]:
+    """A standalone filter as post-order FFI nodes (empty = no filter)."""
+    nodes: typing.List[FfiExprNode] = []
+    expr = _where_expr(where)
+    if expr is not None:
+        expr._emit(nodes)
+    return nodes
 
 
 def to_ffi_query(

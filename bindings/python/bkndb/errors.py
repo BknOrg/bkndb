@@ -17,6 +17,16 @@ class BackendError(BknDbError):
     """The storage backend failed (I/O, corruption, ...)."""
 
 
+class CorruptionError(BknDbError):
+    """Stored data failed an integrity check (checksum mismatch, truncated
+    or malformed file structure). Restore from a backup; see
+    :meth:`bkndb.Database.verify_integrity` and :meth:`bkndb.Database.backup`."""
+
+
+class QueryError(BknDbError, ValueError):
+    """A SQL statement or graph pattern failed to parse or is invalid."""
+
+
 class TableNotFoundError(BknDbError):
     def __init__(self, table: str) -> None:
         super().__init__(f"table not found: {table}")
@@ -118,6 +128,10 @@ def translate(exc: FfiBknError) -> BknDbError:  # type: ignore[valid-type]
         return SchemaMismatchError(exc.table, exc.message)
     if isinstance(exc, E.ConstraintViolation):
         return ConstraintViolationError(exc.table, exc.message)
+    if isinstance(exc, E.Corruption):
+        return CorruptionError(exc.message)
+    if isinstance(exc, E.InvalidQuery):
+        return QueryError(exc.message)
     if isinstance(exc, E.DatabaseClosed):
         return DatabaseClosedError("the database has been closed")
     if isinstance(exc, E.TransactionInProgress):

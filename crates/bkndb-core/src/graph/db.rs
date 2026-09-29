@@ -6,7 +6,8 @@ use crate::graph::codec::{
     adj_out_key, adj_type_prefix, adj_type_upper_bound, decode_adj_key, edge_key, next_node_prefix,
     node_key,
 };
-use crate::graph::model::{EdgeId, EdgeRecord, NodeId, NodeRecord, Properties};
+use crate::graph::index;
+use crate::graph::model::{EdgeId, EdgeRecord, NodeId, NodeRecord, PropValue, Properties};
 use crate::{BknError, StorageBackend, StorageReadTx, StorageWriteTx};
 
 fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, BknError> {
@@ -200,6 +201,59 @@ impl<B: StorageBackend> GraphDb<B> {
         Ok(existed)
     }
 
+    /// Runs a `MATCH ... RETURN ...` pattern query (see [`crate::lang::graph`])
+    /// against a read snapshot.
+    ///
+    /// ```ignore
+    /// db.query("MATCH (a:Person {name: $n})-[:KNOWS]->(b) RETURN b.name", Params::named([("n", "Ana")]))?;
+    /// ```
+    pub fn query(&self, text: &str, params: impl Into<crate::lang::Params>) -> Result<crate::lang::QueryResult, BknError> {
+        crate::lang::graph::run(&self.backend.begin_read()?, text, &params.into())
+    }
+
+    /// Ids of every node with `label`, ascending (via the label index).
+    pub fn nodes_by_label(&self, label: &str) -> Result<Vec<NodeId>, BknError> {
+        index::nodes_by_label_in(&self.backend.begin_read()?, label)
+    }
+
+    /// Ids of nodes with `label` whose `property` equals `value`, ascending.
+    /// Uses a property index when one exists (see
+    /// [`GraphDb::create_property_index`]), else scans the label's nodes.
+    pub fn find_nodes(&self, label: &str, property: &str, value: &PropValue) -> Result<Vec<NodeId>, BknError> {
+        index::find_nodes_in(&self.backend.begin_read()?, label, property, value)
+    }
+
+    /// Indexes `property` of nodes with `label` (backfilled immediately) so
+    /// [`GraphDb::find_nodes`] becomes a lookup. Only `Int`/`Str` values are
+    /// indexed. Returns `false` if the index already existed.
+    pub fn create_property_index(&self, label: &str, property: &str) -> Result<bool, BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        let created = index::create_property_index_in(&mut wtx, label, property)?;
+        wtx.commit()?;
+        Ok(created)
+    }
+
+    pub fn drop_property_index(&self, label: &str, property: &str) -> Result<bool, BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        let dropped = index::drop_property_index_in(&mut wtx, label, property)?;
+        wtx.commit()?;
+        Ok(dropped)
+    }
+
+    /// Every property index as `(label, property)`.
+    pub fn property_indexes(&self) -> Result<Vec<(String, String)>, BknError> {
+        index::property_indexes_in(&self.backend.begin_read()?)
+    }
+
+    /// Rebuilds all graph indexes from the node table. Only needed once for
+    /// databases created before graph indexes existed, where label lookups
+    /// otherwise fall back to full scans.
+    pub fn rebuild_indexes(&self) -> Result<(), BknError> {
+        let mut wtx = self.backend.begin_write()?;
+        index::rebuild_indexes_in(&mut wtx)?;
+        wtx.commit()
+    }
+
     pub fn traversal(&self) -> crate::graph::traversal::TraversalBuilder<'_, B> {
         crate::graph::traversal::TraversalBuilder::new(self)
     }
@@ -213,6 +267,22 @@ impl<B: StorageBackend> GraphDb<B> {
     ) -> Result<Option<crate::graph::traversal::PathResult>, BknError> {
         let rtx = self.backend.begin_read()?;
         crate::graph::traversal::find_shortest_path_in(&rtx, start, target, direction, edge_types)
+    }
+
+    /// Lowest-cost path (Dijkstra) where each edge costs its numeric
+    /// `weight_property`, or `default_weight` when absent. See
+    /// [`crate::graph::WeightedPath`].
+    pub fn find_weighted_path(
+        &self,
+        start: NodeId,
+        target: NodeId,
+        direction: crate::graph::traversal::Direction,
+        edge_types: Option<&[&str]>,
+        weight_property: &str,
+        default_weight: f64,
+    ) -> Result<Option<crate::graph::traversal::WeightedPath>, BknError> {
+        let rtx = self.backend.begin_read()?;
+        crate::graph::traversal::find_weighted_path_in(&rtx, start, target, direction, edge_types, weight_property, default_weight)
     }
 
     pub fn top_hubs(
@@ -268,12 +338,14 @@ pub(crate) fn create_node_in<W: StorageWriteTx>(
     label: &str,
     properties: Properties,
 ) -> Result<NodeId, BknError> {
+    index::before_first_nodes(wtx)?;
     let id = NodeId(next_id(wtx, NEXT_NODE_ID_KEY)?);
     let record = NodeRecord {
         label: label.to_string(),
         properties,
     };
     wtx.put(NODES, &node_key(id), &encode(&record)?)?;
+    index::on_insert(wtx, id, &record)?;
     Ok(id)
 }
 
@@ -324,12 +396,14 @@ pub(crate) fn create_nodes_bulk_in<W: StorageWriteTx>(
     if items.is_empty() {
         return Ok(Vec::new());
     }
+    index::before_first_nodes(wtx)?;
     let start_id = reserve_ids(wtx, NEXT_NODE_ID_KEY, items.len() as u64)?;
     let mut ids = Vec::with_capacity(items.len());
     for (i, (label, properties)) in items.into_iter().enumerate() {
         let id = NodeId(start_id + i as u64);
         let record = NodeRecord { label, properties };
         wtx.put(NODES, &node_key(id), &encode(&record)?)?;
+        index::on_insert(wtx, id, &record)?;
         ids.push(id);
     }
     Ok(ids)
@@ -417,6 +491,10 @@ pub(crate) fn delete_node_in<W: StorageWriteTx>(wtx: &mut W, id: NodeId) -> Resu
         wtx.delete(EDGES, &edge_key(edge_id))?;
     }
 
+    if let Some(bytes) = wtx.get(NODES, &node_key(id))? {
+        let record: NodeRecord = decode(&bytes)?;
+        index::on_delete(wtx, id, &record)?;
+    }
     wtx.delete(NODES, &node_key(id))?;
     Ok(())
 }
@@ -428,8 +506,10 @@ pub(crate) fn update_node_properties_in<W: StorageWriteTx>(
     mutate: impl FnOnce(&mut Properties),
 ) -> Result<(), BknError> {
     let bytes = wtx.get(NODES, &node_key(id))?.ok_or(BknError::NotFound)?;
-    let mut record: NodeRecord = decode(&bytes)?;
+    let old: NodeRecord = decode(&bytes)?;
+    let mut record = old.clone();
     mutate(&mut record.properties);
+    index::on_update(wtx, id, &old, &record)?;
     wtx.put(NODES, &node_key(id), &encode(&record)?)?;
     Ok(())
 }
@@ -535,17 +615,17 @@ pub(crate) fn top_hubs_in<R: StorageReadTx>(
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 
-    let rows = rtx.range(NODES, Bound::Unbounded, Bound::Unbounded)?;
+    let candidates: Vec<NodeId> = match label_filter {
+        Some(label) => index::nodes_by_label_in(rtx, label)?,
+        None => rtx
+            .range(NODES, Bound::Unbounded, Bound::Unbounded)?
+            .iter()
+            .map(|(k, _)| crate::graph::codec::decode_node_id(k))
+            .collect::<Result<_, _>>()?,
+    };
     let mut heap: BinaryHeap<Reverse<(usize, u64)>> = BinaryHeap::with_capacity(limit);
 
-    for (k, v) in rows {
-        let node_id = crate::graph::codec::decode_node_id(&k)?;
-        if let Some(target_label) = label_filter {
-            let record: NodeRecord = decode(&v)?;
-            if record.label != target_label {
-                continue;
-            }
-        }
+    for node_id in candidates {
 
         let deg = match direction {
             crate::graph::traversal::Direction::Out => {

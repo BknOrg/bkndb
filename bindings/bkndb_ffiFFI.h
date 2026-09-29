@@ -274,6 +274,11 @@ uint64_t uniffi_bkndb_ffi_fn_constructor_bkndbengine_open_with_options(RustBuffe
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_aggregate(uint64_t ptr, RustBuffer table, RustBuffer query, RustBuffer group_by, RustBuffer aggregates, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_BACKUP
+void uniffi_bkndb_ffi_fn_method_bkndbengine_backup(uint64_t ptr, RustBuffer dest, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_BEGIN_TRANSACTION
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_BEGIN_TRANSACTION
 uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_begin_transaction(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -299,6 +304,11 @@ void uniffi_bkndb_ffi_fn_method_bkndbengine_compact(uint64_t ptr, RustCallStatus
 uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_count(uint64_t ptr, RustBuffer table, RustBuffer query, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_COUNT_NODES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_COUNT_NODES
+uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_count_nodes(uint64_t ptr, RustBuffer label, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_EDGE
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_EDGE
 uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_create_edge(uint64_t ptr, uint64_t from, RustBuffer edge_type, uint64_t to, RustBuffer properties, RustCallStatus *_Nonnull out_status
@@ -309,6 +319,11 @@ uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_create_edge(uint64_t ptr, uint64
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_create_edges_bulk(uint64_t ptr, RustBuffer edges, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_FULLTEXT_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_FULLTEXT_INDEX
+int8_t uniffi_bkndb_ffi_fn_method_bkndbengine_create_fulltext_index(uint64_t ptr, RustBuffer table, RustBuffer column, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_INDEX
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_INDEX
 void uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(uint64_t ptr, RustBuffer table, RustBuffer column, RustCallStatus *_Nonnull out_status
@@ -317,6 +332,11 @@ void uniffi_bkndb_ffi_fn_method_bkndbengine_create_index(uint64_t ptr, RustBuffe
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_NODE
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_NODE
 uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_create_node(uint64_t ptr, RustBuffer label, RustBuffer properties, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_NODE_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_NODE_INDEX
+int8_t uniffi_bkndb_ffi_fn_method_bkndbengine_create_node_index(uint64_t ptr, RustBuffer label, RustBuffer property, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_CREATE_NODES_BULK
@@ -349,9 +369,19 @@ void uniffi_bkndb_ffi_fn_method_bkndbengine_delete_node(uint64_t ptr, uint64_t i
 uint64_t uniffi_bkndb_ffi_fn_method_bkndbengine_delete_rows(uint64_t ptr, RustBuffer table, RustBuffer query, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_FULLTEXT_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_FULLTEXT_INDEX
+int8_t uniffi_bkndb_ffi_fn_method_bkndbengine_drop_fulltext_index(uint64_t ptr, RustBuffer table, RustBuffer column, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_INDEX
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_INDEX
 void uniffi_bkndb_ffi_fn_method_bkndbengine_drop_index(uint64_t ptr, RustBuffer table, RustBuffer column, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_NODE_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_NODE_INDEX
+int8_t uniffi_bkndb_ffi_fn_method_bkndbengine_drop_node_index(uint64_t ptr, RustBuffer label, RustBuffer property, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_DROP_TABLE
@@ -364,9 +394,19 @@ int8_t uniffi_bkndb_ffi_fn_method_bkndbengine_drop_table(uint64_t ptr, RustBuffe
 void uniffi_bkndb_ffi_fn_method_bkndbengine_ensure_table(uint64_t ptr, RustBuffer schema, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_FIND_NODES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_FIND_NODES
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_find_nodes(uint64_t ptr, RustBuffer label, RustBuffer property, RustBuffer value, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_FIND_SHORTEST_PATH
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_FIND_SHORTEST_PATH
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_find_shortest_path(uint64_t ptr, uint64_t start, uint64_t target, RustBuffer direction, RustBuffer edge_types, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_FIND_WEIGHTED_PATH
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_FIND_WEIGHTED_PATH
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_find_weighted_path(uint64_t ptr, uint64_t start, uint64_t target, RustBuffer direction, RustBuffer edge_types, RustBuffer weight_property, double default_weight, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_GET_EDGE
@@ -384,6 +424,11 @@ RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_get_node(uint64_t ptr, uint64_
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_get_row(uint64_t ptr, RustBuffer table, RustBuffer pk, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_GRAPH_QUERY
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_GRAPH_QUERY
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_graph_query(uint64_t ptr, RustBuffer query, RustBuffer positional, RustBuffer named, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_INSERT
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_INSERT
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_insert(uint64_t ptr, RustBuffer table, RustBuffer values, RustCallStatus *_Nonnull out_status
@@ -397,6 +442,16 @@ RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_insert_many(uint64_t ptr, Rust
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_IS_CLOSED
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_IS_CLOSED
 int8_t uniffi_bkndb_ffi_fn_method_bkndbengine_is_closed(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_LIST_FULLTEXT_INDEXES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_LIST_FULLTEXT_INDEXES
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_list_fulltext_indexes(uint64_t ptr, RustBuffer table, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_LIST_NODE_INDEXES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_LIST_NODE_INDEXES
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_list_node_indexes(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_LIST_TABLES
@@ -419,9 +474,39 @@ RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_neighbors_in(uint64_t ptr, uin
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_neighbors_out(uint64_t ptr, uint64_t node, RustBuffer edge_type, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_NODES_BY_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_NODES_BY_LABEL
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_nodes_by_label(uint64_t ptr, RustBuffer label, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_REBUILD_GRAPH_INDEXES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_REBUILD_GRAPH_INDEXES
+void uniffi_bkndb_ffi_fn_method_bkndbengine_rebuild_graph_indexes(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SEARCH_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SEARCH_TEXT
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_search_text(uint64_t ptr, RustBuffer table, RustBuffer column, RustBuffer query, uint32_t limit, int8_t match_all, RustBuffer filter, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SEARCH_VECTOR
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SEARCH_VECTOR
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_search_vector(uint64_t ptr, RustBuffer table, RustBuffer column, RustBuffer vector, uint32_t limit, RustBuffer metric, RustBuffer filter, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SELECT
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SELECT
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_select(uint64_t ptr, RustBuffer table, RustBuffer query, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SQL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SQL
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_sql(uint64_t ptr, RustBuffer query, RustBuffer positional, RustBuffer named, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_STATS
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_STATS
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_stats(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_SYNC_BATCH
@@ -467,6 +552,11 @@ RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_upsert(uint64_t ptr, RustBuffe
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_UPSERT_MANY
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_UPSERT_MANY
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_upsert_many(uint64_t ptr, RustBuffer table, RustBuffer rows, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_VERIFY_INTEGRITY
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBENGINE_VERIFY_INTEGRITY
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbengine_verify_integrity(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_CLONE_BKNDBTRANSACTION
@@ -539,6 +629,11 @@ int8_t uniffi_bkndb_ffi_fn_method_bkndbtransaction_drop_table(uint64_t ptr, Rust
 void uniffi_bkndb_ffi_fn_method_bkndbtransaction_ensure_table(uint64_t ptr, RustBuffer schema, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_FIND_NODES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_FIND_NODES
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_find_nodes(uint64_t ptr, RustBuffer label, RustBuffer property, RustBuffer value, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_GET_EDGE
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_GET_EDGE
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_get_edge(uint64_t ptr, uint64_t id, RustCallStatus *_Nonnull out_status
@@ -552,6 +647,11 @@ RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_get_node(uint64_t ptr, ui
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_GET_ROW
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_GET_ROW
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_get_row(uint64_t ptr, RustBuffer table, RustBuffer pk, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_GRAPH_QUERY
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_GRAPH_QUERY
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_graph_query(uint64_t ptr, RustBuffer query, RustBuffer positional, RustBuffer named, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_INSERT
@@ -574,6 +674,11 @@ int8_t uniffi_bkndb_ffi_fn_method_bkndbtransaction_is_active(uint64_t ptr, RustC
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_neighbors(uint64_t ptr, uint64_t node, RustBuffer direction, RustBuffer edge_type, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_NODES_BY_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_NODES_BY_LABEL
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_nodes_by_label(uint64_t ptr, RustBuffer label, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_ROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_ROLLBACK
 void uniffi_bkndb_ffi_fn_method_bkndbtransaction_rollback(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -582,6 +687,11 @@ void uniffi_bkndb_ffi_fn_method_bkndbtransaction_rollback(uint64_t ptr, RustCall
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_SELECT
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_SELECT
 RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_select(uint64_t ptr, RustBuffer table, RustBuffer query, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_SQL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_SQL
+RustBuffer uniffi_bkndb_ffi_fn_method_bkndbtransaction_sql(uint64_t ptr, RustBuffer query, RustBuffer positional, RustBuffer named, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_FN_METHOD_BKNDBTRANSACTION_UPDATE_EDGE_PROPERTIES
@@ -875,6 +985,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_aggregate(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_BACKUP
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_backup(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_BEGIN_TRANSACTION
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_BEGIN_TRANSACTION
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_begin_transaction(void
@@ -905,6 +1021,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_count(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_COUNT_NODES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_COUNT_NODES
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_count_nodes(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_EDGE
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_EDGE
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edge(void
@@ -917,6 +1039,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_edges_bulk(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_FULLTEXT_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_FULLTEXT_INDEX
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_fulltext_index(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_INDEX
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_INDEX
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index(void
@@ -926,6 +1054,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_index(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_NODE
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_NODE
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_NODE_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_CREATE_NODE_INDEX
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_create_node_index(void
     
 );
 #endif
@@ -965,9 +1099,21 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_delete_rows(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_DROP_FULLTEXT_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_DROP_FULLTEXT_INDEX
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_fulltext_index(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_DROP_INDEX
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_DROP_INDEX
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_index(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_DROP_NODE_INDEX
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_DROP_NODE_INDEX
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_drop_node_index(void
     
 );
 #endif
@@ -983,9 +1129,21 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_ensure_table(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_FIND_NODES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_FIND_NODES
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_find_nodes(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_FIND_SHORTEST_PATH
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_FIND_SHORTEST_PATH
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_find_shortest_path(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_FIND_WEIGHTED_PATH
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_FIND_WEIGHTED_PATH
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_find_weighted_path(void
     
 );
 #endif
@@ -1007,6 +1165,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_get_row(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_GRAPH_QUERY
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_GRAPH_QUERY
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_graph_query(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_INSERT
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_INSERT
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_insert(void
@@ -1022,6 +1186,18 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_insert_many(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_IS_CLOSED
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_IS_CLOSED
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_is_closed(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_LIST_FULLTEXT_INDEXES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_LIST_FULLTEXT_INDEXES
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_list_fulltext_indexes(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_LIST_NODE_INDEXES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_LIST_NODE_INDEXES
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_list_node_indexes(void
     
 );
 #endif
@@ -1049,9 +1225,45 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_neighbors_out(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_NODES_BY_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_NODES_BY_LABEL
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_nodes_by_label(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_REBUILD_GRAPH_INDEXES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_REBUILD_GRAPH_INDEXES
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_rebuild_graph_indexes(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SEARCH_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SEARCH_TEXT
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_search_text(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SEARCH_VECTOR
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SEARCH_VECTOR
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_search_vector(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SELECT
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SELECT
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_select(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SQL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_SQL
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_sql(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_STATS
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_STATS
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_stats(void
     
 );
 #endif
@@ -1106,6 +1318,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_UPSERT_MANY
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_UPSERT_MANY
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_upsert_many(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_VERIFY_INTEGRITY
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBENGINE_VERIFY_INTEGRITY
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbengine_verify_integrity(void
     
 );
 #endif
@@ -1181,6 +1399,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_ensure_table(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_FIND_NODES
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_FIND_NODES
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_find_nodes(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_GET_EDGE
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_GET_EDGE
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_edge(void
@@ -1196,6 +1420,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_node(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_GET_ROW
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_GET_ROW
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_get_row(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_GRAPH_QUERY
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_GRAPH_QUERY
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_graph_query(void
     
 );
 #endif
@@ -1223,6 +1453,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_neighbors(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_NODES_BY_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_NODES_BY_LABEL
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_nodes_by_label(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_ROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_ROLLBACK
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_rollback(void
@@ -1232,6 +1468,12 @@ uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_rollback(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_SELECT
 #define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_SELECT
 uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_select(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_SQL
+#define UNIFFI_FFIDEF_UNIFFI_BKNDB_FFI_CHECKSUM_METHOD_BKNDBTRANSACTION_SQL
+uint16_t uniffi_bkndb_ffi_checksum_method_bkndbtransaction_sql(void
     
 );
 #endif

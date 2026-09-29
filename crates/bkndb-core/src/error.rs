@@ -17,6 +17,12 @@ pub enum BknError {
     SchemaMismatch { table: String, message: String },
     /// A NOT NULL or UNIQUE constraint would be violated.
     ConstraintViolation { table: String, message: String },
+    /// Stored data failed an integrity check (checksum mismatch, truncated
+    /// or malformed on-disk structure). Never retried or silently skipped.
+    Corruption(String),
+    /// A query-language statement (SQL, graph pattern) failed to parse or
+    /// doesn't make sense — carries a message pointing at the problem.
+    InvalidQuery(String),
 }
 
 impl fmt::Display for BknError {
@@ -28,7 +34,8 @@ impl fmt::Display for BknError {
             BknError::Encoding(msg) => write!(f, "encoding error: {msg}"),
             BknError::ReservedTableName(name) => write!(
                 f,
-                "table name '{name}' is reserved for bkndb-core's internal use (one of: nodes, edges, adj_out, adj_in, meta)"
+                "table name '{name}' is reserved for bkndb-core's internal use (one of: {})",
+                crate::RESERVED_TABLE_NAMES.join(", ")
             ),
             BknError::DatabaseLocked(path) => {
                 write!(f, "database '{path}' is already open by another handle or process")
@@ -42,6 +49,8 @@ impl fmt::Display for BknError {
             BknError::ConstraintViolation { table, message } => {
                 write!(f, "constraint violation in table '{table}': {message}")
             }
+            BknError::Corruption(msg) => write!(f, "data corruption detected: {msg}"),
+            BknError::InvalidQuery(msg) => write!(f, "invalid query: {msg}"),
         }
     }
 }

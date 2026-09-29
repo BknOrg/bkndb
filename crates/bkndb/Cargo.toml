@@ -9,18 +9,19 @@ description = "Embedded hybrid graph-relational database engine with ACID transa
 readme = "README.md"
 
 [dependencies]
-bkndb-core = { version = "0.1.0", path = "../bkndb-core" }
-bkndb-storage-redb = { version = "0.1.0", path = "../bkndb-storage-redb", optional = true }
-bkndb-storage-mem = { version = "0.1.0", path = "../bkndb-storage-mem", optional = true }
-bkndb-storage-lsm = { version = "0.1.0", path = "../bkndb-storage-lsm", optional = true }
+bkndb-core = { version = "0.2.0", path = "../bkndb-core" }
+bkndb-storage-redb = { version = "0.2.0", path = "../bkndb-storage-redb", optional = true }
+bkndb-storage-mem = { version = "0.2.0", path = "../bkndb-storage-mem", optional = true }
+bkndb-storage-lsm = { version = "0.2.0", path = "../bkndb-storage-lsm", optional = true }
 
 [features]
-default = ["lsm-backend", "mem-backend", "graph", "relational-layer"]
+default = ["lsm-backend", "mem-backend", "graph", "relational-layer", "search"]
 redb-backend = ["dep:bkndb-storage-redb"]
 mem-backend = ["dep:bkndb-storage-mem"]
 lsm-backend = ["dep:bkndb-storage-lsm"]
 graph = ["bkndb-core/graph"]
 relational-layer = ["bkndb-core/relational"]
+search = ["relational-layer", "bkndb-core/search"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

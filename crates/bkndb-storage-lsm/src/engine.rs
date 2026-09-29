@@ -4,22 +4,29 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
-use bkndb_core::{BknError, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+use bkndb_core::{BknError, KvIter, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 
-use crate::compaction::{merge_sources, MergeSource};
+use crate::compaction::{EntryIter, MergeIter};
 use crate::container;
 use crate::keys;
 use crate::manifest::{Manifest, SstableRef};
 use crate::memtable::{memtable_byte_size, LsmValue, Memtable};
-use crate::sstable::SstableHandle;
+use crate::sstable::{SstableHandle, WriteOptions};
 use crate::wal;
 use crate::wal::WalRecord;
 
 #[derive(Debug, Clone)]
 pub struct LsmOptions {
+    /// Flush the memtable to a new SSTable once it holds this many bytes.
     pub memtable_flush_bytes: usize,
+    /// Merge every SSTable into one as soon as there are this many.
     pub compaction_trigger_files: usize,
-    pub sparse_index_interval: usize,
+    /// Target (uncompressed) size of one SSTable block — the unit that is
+    /// checksummed, compressed, and read per point lookup.
+    pub block_size_bytes: usize,
+    /// lz4-compress SSTable blocks written from now on. Blocks are flagged
+    /// individually, so files mixing both kinds read fine either way.
+    pub compression: bool,
 }
 
 impl Default for LsmOptions {
@@ -27,9 +34,48 @@ impl Default for LsmOptions {
         Self {
             memtable_flush_bytes: 16 * 1024 * 1024,
             compaction_trigger_files: 16,
-            sparse_index_interval: 16,
+            block_size_bytes: 4096,
+            compression: true,
         }
     }
+}
+
+/// Point-in-time size figures for one database file — see
+/// [`LsmStorageBackend::stats`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LsmStats {
+    /// Size of the `.bkndb` file on disk.
+    pub file_bytes: u64,
+    pub sstable_count: usize,
+    /// SSTables still in the pre-checksum v1 format (rewritten by the next
+    /// compaction).
+    pub legacy_sstable_count: usize,
+    pub sstable_bytes: u64,
+    /// Entries across all SSTables, counting every stored version and
+    /// tombstone (estimated for legacy SSTables).
+    pub sstable_entries: u64,
+    /// Entries/bytes buffered in memory, not yet flushed to an SSTable
+    /// (they are durable in the WAL).
+    pub memtable_entries: usize,
+    pub memtable_bytes: usize,
+    /// Bytes of write-ahead log covering the memtable.
+    pub wal_bytes: u64,
+    /// Dead space (superseded SSTables, manifests and old WAL frames) that
+    /// [`force_compact`](LsmStorageBackend::force_compact) would give back.
+    pub reclaimable_bytes: u64,
+}
+
+/// What [`LsmStorageBackend::verify_integrity`] checked.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IntegrityReport {
+    pub sstables_checked: usize,
+    /// Blocks whose checksum was recomputed and matched.
+    pub blocks_verified: u64,
+    /// Blocks from legacy v1 SSTables, which carry no checksum: fully
+    /// decoded, but corruption that still decodes can't be detected there.
+    pub legacy_blocks_unchecked: u64,
+    pub entries: u64,
+    pub wal_records: u64,
 }
 
 struct EngineState {
@@ -41,6 +87,8 @@ struct EngineState {
     /// Absolute offset in the container file where the active WAL region
     /// begins — see `manifest.rs`'s field doc for why no length is needed.
     wal_region_start: u64,
+    /// Byte length of the live manifest blob (for `stats`).
+    manifest_len: u64,
 }
 
 /// A cheap, point-in-time view of "current memtable + immutable memtables +
@@ -49,7 +97,7 @@ struct EngineState {
 /// compaction only ever replace `Arc` pointers in `EngineState` rather than
 /// mutate shared data in place, a snapshot's data never changes under it —
 /// a long-running read is never blocked by, and never blocks, concurrent
-/// writers or background compaction.
+/// writers or compaction.
 struct ReadSnapshot {
     active_memtable: Arc<Memtable>,
     immutable_memtables: Vec<Arc<Memtable>>,
@@ -86,6 +134,10 @@ fn io_err(e: std::io::Error) -> BknError {
     BknError::Backend(e.to_string())
 }
 
+fn manifest_corrupt(e: BknError) -> BknError {
+    BknError::Corruption(format!("manifest undecodable: {e}"))
+}
+
 /// Takes an exclusive, non-blocking OS lock on an open container file,
 /// failing fast with `DatabaseLocked` if another handle already holds it.
 fn lock_exclusive(file: &File, path: &Path) -> Result<(), BknError> {
@@ -113,10 +165,75 @@ fn sync_parent_dir(_path: &Path) -> Result<(), BknError> {
     Ok(())
 }
 
-fn compaction_tmp_path(path: &Path) -> PathBuf {
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
-    s.push(".compact.tmp");
+    s.push(suffix);
     PathBuf::from(s)
+}
+
+fn compaction_tmp_path(path: &Path) -> PathBuf {
+    with_suffix(path, ".compact.tmp")
+}
+
+/// A complete, fsynced single-SSTable container file (see
+/// [`write_fresh_container`]).
+struct FreshContainer {
+    file: Arc<File>,
+    handle: SstableHandle,
+    manifest: Manifest,
+    manifest_len: u64,
+}
+
+/// Writes `entries` (ascending, live values only) into a brand-new file at
+/// `path` as a complete database: header + one SSTable + a manifest
+/// referencing it + an empty WAL region, fsynced before returning. Shared
+/// by compaction (which then renames it over the live file) and backup.
+/// On error the partial file is removed.
+fn write_fresh_container(
+    path: &Path,
+    generation: u64,
+    entries: MergeIter<'_>,
+    expected_items: usize,
+    opts: WriteOptions,
+) -> Result<FreshContainer, BknError> {
+    let result = (|| {
+        let file = Arc::new(container::create_container_file(path)?);
+        file.set_len(container::BODY_START).map_err(io_err)?;
+
+        let entries = entries.map(|r| r.map(|(k, v)| (k, LsmValue::Value(v))));
+        let handle = SstableHandle::write(&file, generation, entries, expected_items, opts)?;
+
+        let placeholder = Manifest {
+            next_sstable_id: generation + 1,
+            sstables: vec![SstableRef {
+                generation,
+                offset: handle.base_offset,
+                length: handle.blob_len,
+            }],
+            wal_region_start: 0,
+        };
+        let len = placeholder.encode()?.len() as u64;
+        let manifest_offset = handle.base_offset + handle.blob_len;
+        let manifest = Manifest {
+            wal_region_start: manifest_offset + len,
+            ..placeholder
+        };
+        let bytes = manifest.encode()?;
+        container::write_blob_at(&file, manifest_offset, &bytes)?;
+        file.sync_data().map_err(io_err)?;
+        container::write_header(&file, 0, 1, manifest_offset, &bytes)?;
+        file.sync_all().map_err(io_err)?; // final durability checkpoint of the whole new file before it goes live
+        Ok(FreshContainer {
+            file,
+            handle,
+            manifest,
+            manifest_len: bytes.len() as u64,
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(path);
+    }
+    result
 }
 
 impl LsmStorageBackend {
@@ -142,10 +259,10 @@ impl LsmStorageBackend {
         // in-progress compaction.
         let _ = fs::remove_file(compaction_tmp_path(&path));
 
-        let (manifest, header_seq, header_slot) = match container::read_header(&file)? {
+        let (manifest, manifest_len, header_seq, header_slot) = match container::read_header(&file)? {
             Some(slot) => {
-                let bytes = container::read_blob(&file, slot.manifest_offset, slot.manifest_len)?;
-                (Manifest::decode(&bytes)?, slot.seq, slot.slot)
+                let bytes = container::read_manifest(&file, &slot)?;
+                (Manifest::decode(&bytes).map_err(manifest_corrupt)?, slot.manifest_len, slot.seq, slot.slot)
             }
             None => {
                 // Fresh, empty file: bootstrap a manifest with no
@@ -168,8 +285,8 @@ impl LsmStorageBackend {
                 let bytes = manifest.encode()?;
                 container::write_blob_at(&file, container::BODY_START, &bytes)?;
                 file.sync_data().map_err(io_err)?;
-                let (seq, slot) = container::write_header(&file, 0, 1, container::BODY_START, bytes.len() as u64)?;
-                (manifest, seq, slot)
+                let (seq, slot) = container::write_header(&file, 0, 1, container::BODY_START, &bytes)?;
+                (manifest, bytes.len() as u64, seq, slot)
             }
         };
 
@@ -213,6 +330,7 @@ impl LsmStorageBackend {
             sstables,
             next_sstable_id: manifest.next_sstable_id,
             wal_region_start: manifest.wal_region_start,
+            manifest_len,
         };
 
         Ok(Self {
@@ -224,6 +342,13 @@ impl LsmStorageBackend {
         })
     }
 
+    fn write_options(&self) -> WriteOptions {
+        WriteOptions {
+            block_size: self.options.block_size_bytes,
+            compress: self.options.compression,
+        }
+    }
+
     fn snapshot(&self) -> ReadSnapshot {
         let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         ReadSnapshot {
@@ -233,7 +358,7 @@ impl LsmStorageBackend {
         }
     }
 
-    fn commit_pending(&self, pending: BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), BknError> {
+    fn commit_pending(&self, pending: Pending) -> Result<(), BknError> {
         if pending.is_empty() {
             return Ok(());
         }
@@ -298,16 +423,16 @@ impl LsmStorageBackend {
 
         let new_handle;
         let new_wal_region_start;
+        let new_manifest_len;
         {
             let mut cw = self.container.lock().unwrap_or_else(|e| e.into_inner());
 
-            let entries: Vec<(Vec<u8>, LsmValue)> = memtable_to_flush.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            let count = entries.len();
-            let handle = SstableHandle::write(&cw.file, generation, entries, count, self.options.sparse_index_interval)?;
+            let entries = memtable_to_flush.iter().map(|(k, v)| Ok((k.clone(), v.clone())));
+            let handle = SstableHandle::write(&cw.file, generation, entries, memtable_to_flush.len(), self.write_options())?;
 
-            let existing_refs: Vec<SstableRef> = {
+            let (mut sstable_refs, next_sstable_id) = {
                 let state = self.state.read().unwrap_or_else(|e| e.into_inner());
-                state
+                let refs: Vec<SstableRef> = state
                     .sstables
                     .iter()
                     .map(|s| SstableRef {
@@ -315,23 +440,19 @@ impl LsmStorageBackend {
                         offset: s.base_offset,
                         length: s.blob_len,
                     })
-                    .collect()
+                    .collect();
+                (refs, state.next_sstable_id)
             };
-            let mut sstable_refs = existing_refs;
             sstable_refs.push(SstableRef {
                 generation: handle.generation,
                 offset: handle.base_offset,
                 length: handle.blob_len,
             });
 
-            let next_sstable_id = {
-                let state = self.state.read().unwrap_or_else(|e| e.into_inner());
-                state.next_sstable_id
-            };
             let manifest_offset = handle.base_offset + handle.blob_len;
             let placeholder = Manifest {
                 next_sstable_id,
-                sstables: sstable_refs.clone(),
+                sstables: sstable_refs,
                 wal_region_start: 0,
             };
             let len = placeholder.encode()?.len() as u64;
@@ -342,12 +463,13 @@ impl LsmStorageBackend {
             let bytes = manifest.encode()?;
             container::write_blob_at(&cw.file, manifest_offset, &bytes)?;
             cw.file.sync_data().map_err(io_err)?;
-            let (seq, slot) = container::write_header(&cw.file, cw.header_seq, cw.header_slot, manifest_offset, bytes.len() as u64)?;
+            let (seq, slot) = container::write_header(&cw.file, cw.header_seq, cw.header_slot, manifest_offset, &bytes)?;
             cw.header_seq = seq;
             cw.header_slot = slot;
 
             new_handle = handle;
             new_wal_region_start = manifest.wal_region_start;
+            new_manifest_len = bytes.len() as u64;
         }
 
         let should_compact;
@@ -358,11 +480,12 @@ impl LsmStorageBackend {
                 state.immutable_memtables.remove(pos);
             }
             state.wal_region_start = new_wal_region_start;
+            state.manifest_len = new_manifest_len;
             should_compact = state.sstables.len() >= self.options.compaction_trigger_files;
         }
 
         if should_compact {
-            self.compact_all()?;
+            self.compact_all(false)?;
         }
         Ok(())
     }
@@ -371,18 +494,20 @@ impl LsmStorageBackend {
     /// writing it into a **brand-new file** (header + merged blob + a
     /// manifest referencing just that one SSTable + an empty WAL region)
     /// rather than appending to the live file, then atomically renaming
-    /// that new file over the live path — reusing the exact temp-write +
-    /// `fs::rename` atomicity `manifest.rs` used to rely on at the
-    /// single-manifest-file level, just applied to the whole database file.
-    /// This is also the vacuum step: the new file only contains live data,
-    /// so it's smaller than the file it replaces whenever there was dead
-    /// space to reclaim.
+    /// that new file over the live path. This is also the vacuum step: the
+    /// new file only contains live data, so it's smaller than the file it
+    /// replaces whenever there was dead space to reclaim — and it's written
+    /// in the current SSTable format, which upgrades legacy files.
+    ///
+    /// The merge streams: each input SSTable is read one block at a time
+    /// and the output is written block by block, so memory stays flat no
+    /// matter how large the database is.
     ///
     /// Because this always merges *all* generations at once (size-tiered,
     /// "compact everything past N files" rather than a partial/leveled
     /// merge), no older generation is ever left outside the batch that
-    /// could still need a tombstone to shadow it — so `merge_sources`'s
-    /// unconditional tombstone-dropping is always safe here.
+    /// could still need a tombstone to shadow it — so dropping tombstones
+    /// in the merge is always safe here.
     ///
     /// Must be called only while `writer_lock` is already held by the
     /// caller (either inherited from a write-tx guard via `flush()`, or
@@ -398,22 +523,29 @@ impl LsmStorageBackend {
     /// file handle is opened, see `container.rs`) lets the rename proceed
     /// while such handles remain open, and NTFS defers freeing the old
     /// file's storage until the last handle to it closes.
-    fn compact_all(&self) -> Result<(), BknError> {
+    ///
+    /// The automatic call from `flush` (`force == false`) only merges once
+    /// there are at least two SSTables. `force_compact` rewrites even a lone
+    /// SSTable: the point there is also to reclaim dead WAL/manifest space
+    /// and upgrade legacy-format data, which one SSTable can still carry.
+    fn compact_all(&self, force: bool) -> Result<(), BknError> {
         let sstables_to_merge;
         {
             let state = self.state.read().unwrap_or_else(|e| e.into_inner());
-            if state.sstables.len() < 2 {
+            let worth_it = state.sstables.len() >= 2 || (force && !state.sstables.is_empty());
+            if !worth_it {
                 return Ok(());
             }
             sstables_to_merge = state.sstables.clone();
         }
 
-        let mut sources = Vec::with_capacity(sstables_to_merge.len());
-        for (rank, sst) in sstables_to_merge.iter().rev().enumerate() {
-            let entries = sst.range(Bound::Unbounded, Bound::Unbounded)?;
-            sources.push(MergeSource { rank: rank as u32, entries });
-        }
-        let merged = merge_sources(sources);
+        // Newest generation first, as `MergeIter` expects.
+        let sources: Vec<EntryIter<'_>> = sstables_to_merge
+            .iter()
+            .rev()
+            .map(|sst| Box::new(sst.cursor(Bound::Unbounded, Bound::Unbounded)) as EntryIter<'_>)
+            .collect();
+        let expected: u64 = sstables_to_merge.iter().map(|s| s.estimated_entries()).sum();
 
         let new_generation = {
             let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
@@ -423,48 +555,24 @@ impl LsmStorageBackend {
         };
 
         let tmp_path = compaction_tmp_path(&self.path);
-        let new_file = Arc::new(container::create_container_file(&tmp_path)?);
-        new_file.set_len(container::BODY_START).map_err(io_err)?;
+        let fresh = write_fresh_container(&tmp_path, new_generation, MergeIter::new(sources), expected as usize, self.write_options())?;
 
-        let count = merged.len();
-        let handle = SstableHandle::write(&new_file, new_generation, merged, count, self.options.sparse_index_interval)?;
-
-        let placeholder = Manifest {
-            next_sstable_id: new_generation + 1,
-            sstables: vec![SstableRef {
-                generation: new_generation,
-                offset: handle.base_offset,
-                length: handle.blob_len,
-            }],
-            wal_region_start: 0,
-        };
-        let len = placeholder.encode()?.len() as u64;
-        let manifest_offset = handle.base_offset + handle.blob_len;
-        let manifest = Manifest {
-            wal_region_start: manifest_offset + len,
-            ..placeholder
-        };
-        let bytes = manifest.encode()?;
-        container::write_blob_at(&new_file, manifest_offset, &bytes)?;
-        new_file.sync_data().map_err(io_err)?;
-        container::write_header(&new_file, 0, 1, manifest_offset, bytes.len() as u64)?;
-        new_file.sync_all().map_err(io_err)?; // final durability checkpoint of the whole new file before it goes live
-
-        lock_exclusive(&new_file, &self.path)?;
+        lock_exclusive(&fresh.file, &self.path)?;
         fs::rename(&tmp_path, &self.path).map_err(io_err)?;
         sync_parent_dir(&self.path)?;
 
         {
             let mut cw = self.container.lock().unwrap_or_else(|e| e.into_inner());
-            cw.file = new_file.clone();
+            cw.file = fresh.file.clone();
             cw.header_seq = 1;
             cw.header_slot = 0;
         }
         {
             let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
-            state.sstables = vec![Arc::new(handle)];
-            state.wal_region_start = manifest.wal_region_start;
-            state.next_sstable_id = manifest.next_sstable_id;
+            state.sstables = vec![Arc::new(fresh.handle)];
+            state.wal_region_start = fresh.manifest.wal_region_start;
+            state.next_sstable_id = fresh.manifest.next_sstable_id;
+            state.manifest_len = fresh.manifest_len;
         }
 
         Ok(())
@@ -483,15 +591,107 @@ impl LsmStorageBackend {
     pub fn force_compact(&self) -> Result<(), BknError> {
         let _guard = self.writer_lock.lock().unwrap_or_else(|e| e.into_inner());
         self.flush()?;
-        self.compact_all()
+        self.compact_all(true)
     }
 
     pub fn sstable_count(&self) -> usize {
         self.state.read().unwrap_or_else(|e| e.into_inner()).sstables.len()
     }
+
+    /// Path of the database file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Writes a consistent, compacted copy of the database — everything
+    /// committed when the call starts — to a new file at `dest`, which opens
+    /// like any other `.bkndb` file.
+    ///
+    /// Online: it reads from a snapshot, so readers and writers carry on
+    /// meanwhile (commits made after the call started just aren't in the
+    /// copy). The copy is written to `dest` + `.backup.tmp`, fsynced, then
+    /// renamed into place, so a crash never leaves a half-written file
+    /// under `dest`. Fails if `dest` already exists.
+    pub fn backup_to(&self, dest: impl AsRef<Path>) -> Result<(), BknError> {
+        let dest = dest.as_ref();
+        if dest.exists() {
+            return Err(BknError::Backend(format!("backup target '{}' already exists", dest.display())));
+        }
+        if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).map_err(io_err)?;
+        }
+        let snapshot = self.snapshot();
+        let expected = snapshot.active_memtable.len() as u64
+            + snapshot.immutable_memtables.iter().map(|m| m.len() as u64).sum::<u64>()
+            + snapshot.sstables.iter().map(|s| s.estimated_entries()).sum::<u64>();
+        let sources = scan_sources(&snapshot, None, &Bound::Unbounded, &Bound::Unbounded);
+
+        let tmp = with_suffix(dest, ".backup.tmp");
+        drop(write_fresh_container(&tmp, 1, MergeIter::new(sources), expected as usize, self.write_options())?);
+        fs::rename(&tmp, dest).map_err(io_err)?;
+        sync_parent_dir(dest)
+    }
+
+    /// Current size figures for the file and the in-memory write buffer.
+    pub fn stats(&self) -> Result<LsmStats, BknError> {
+        // Lock order matches `flush`: container, then state.
+        let cw = self.container.lock().unwrap_or_else(|e| e.into_inner());
+        let file_bytes = cw.file.metadata().map_err(io_err)?.len();
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
+        let (memtable_entries, memtable_bytes) = std::iter::once(&state.active_memtable)
+            .chain(&state.immutable_memtables)
+            .fold((0, 0), |(n, b), m| (n + m.len(), b + memtable_byte_size(m)));
+        let sstable_bytes: u64 = state.sstables.iter().map(|s| s.blob_len).sum();
+        let wal_bytes = file_bytes.saturating_sub(state.wal_region_start);
+        Ok(LsmStats {
+            file_bytes,
+            sstable_count: state.sstables.len(),
+            legacy_sstable_count: state.sstables.iter().filter(|s| s.is_legacy()).count(),
+            sstable_bytes,
+            sstable_entries: state.sstables.iter().map(|s| s.estimated_entries()).sum(),
+            memtable_entries,
+            memtable_bytes,
+            wal_bytes,
+            reclaimable_bytes: file_bytes.saturating_sub(container::BODY_START + sstable_bytes + state.manifest_len + wal_bytes),
+        })
+    }
+
+    /// Re-reads every stored byte and checks it: the header's manifest
+    /// checksum, every SSTable block's checksum and encoding, and every WAL
+    /// frame. Returns what was checked, or [`BknError::Corruption`] naming
+    /// the first bad structure. SSTables are checked from a snapshot, so
+    /// only the (short) WAL re-read briefly holds up commits.
+    pub fn verify_integrity(&self) -> Result<IntegrityReport, BknError> {
+        let snapshot = self.snapshot();
+        let mut report = IntegrityReport::default();
+        for sst in &snapshot.sstables {
+            let counts = sst.verify()?;
+            report.sstables_checked += 1;
+            report.blocks_verified += counts.blocks_verified;
+            report.legacy_blocks_unchecked += counts.blocks_unchecked;
+            report.entries += counts.entries;
+        }
+
+        let cw = self.container.lock().unwrap_or_else(|e| e.into_inner());
+        let slot = container::read_header(&cw.file)?.ok_or_else(|| BknError::Corruption("database header is missing".to_string()))?;
+        Manifest::decode(&container::read_manifest(&cw.file, &slot)?).map_err(manifest_corrupt)?;
+        let wal_start = self.state.read().unwrap_or_else(|e| e.into_inner()).wal_region_start;
+        let (records, valid_end) = wal::replay_from(&cw.file, wal_start)?;
+        let file_len = cw.file.metadata().map_err(io_err)?.len();
+        if valid_end != file_len {
+            return Err(BknError::Corruption(format!(
+                "write-ahead log has {} trailing bytes that are not a valid frame",
+                file_len - valid_end
+            )));
+        }
+        report.wal_records = records.len() as u64;
+        Ok(report)
+    }
 }
 
-fn lookup(snapshot: &ReadSnapshot, pending: Option<&BTreeMap<Vec<u8>, Option<Vec<u8>>>>, key: &[u8]) -> Result<Option<Vec<u8>>, BknError> {
+type Pending = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
+
+fn lookup(snapshot: &ReadSnapshot, pending: Option<&Pending>, key: &[u8]) -> Result<Option<Vec<u8>>, BknError> {
     if let Some(entry) = pending.and_then(|p| p.get(key)) {
         return Ok(entry.clone());
     }
@@ -520,60 +720,50 @@ fn lookup(snapshot: &ReadSnapshot, pending: Option<&BTreeMap<Vec<u8>, Option<Vec
     Ok(None)
 }
 
-fn lookup_range(
-    snapshot: &ReadSnapshot,
-    pending: Option<&BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
-    start: Bound<&[u8]>,
-    end: Bound<&[u8]>,
-) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
-    let mut sources = Vec::new();
-    let mut rank = 0u32;
+/// True when `(lo, hi)` can't contain any key. `BTreeMap::range` panics on
+/// such bounds (a filter like `x > 10 AND x < 5` produces them), so scans
+/// short-circuit to an empty result instead.
+fn bounds_empty(lo: &Bound<Vec<u8>>, hi: &Bound<Vec<u8>>) -> bool {
+    match (lo, hi) {
+        (Bound::Included(a), Bound::Included(b)) => a > b,
+        (Bound::Included(a) | Bound::Excluded(a), Bound::Included(b) | Bound::Excluded(b)) => a >= b,
+        _ => false,
+    }
+}
 
+/// Every source visible to a read, newest first — the order `MergeIter`
+/// expects: the transaction's own pending writes, the active memtable, the
+/// immutable memtables, then SSTables from the newest generation down.
+fn scan_sources<'a>(snapshot: &'a ReadSnapshot, pending: Option<&'a Pending>, lo: &Bound<Vec<u8>>, hi: &Bound<Vec<u8>>) -> Vec<EntryIter<'a>> {
+    let mut sources: Vec<EntryIter<'a>> = Vec::new();
+    if bounds_empty(lo, hi) {
+        return sources;
+    }
+    let bounds = (lo.clone(), hi.clone());
     if let Some(p) = pending {
-        let entries: Vec<(Vec<u8>, LsmValue)> = p
-            .range::<[u8], _>((start, end))
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    match v {
-                        Some(b) => LsmValue::Value(b.clone()),
-                        None => LsmValue::Tombstone,
-                    },
-                )
-            })
-            .collect();
-        sources.push(MergeSource { rank, entries });
-        rank += 1;
+        sources.push(Box::new(p.range::<Vec<u8>, _>(bounds.clone()).map(|(k, v)| {
+            let v = match v {
+                Some(b) => LsmValue::Value(b.clone()),
+                None => LsmValue::Tombstone,
+            };
+            Ok((k.clone(), v))
+        })));
     }
-
-    let entries: Vec<(Vec<u8>, LsmValue)> = snapshot
-        .active_memtable
-        .range::<[u8], _>((start, end))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    sources.push(MergeSource { rank, entries });
-    rank += 1;
-
-    for imm in snapshot.immutable_memtables.iter().rev() {
-        let entries: Vec<(Vec<u8>, LsmValue)> = imm.range::<[u8], _>((start, end)).map(|(k, v)| (k.clone(), v.clone())).collect();
-        sources.push(MergeSource { rank, entries });
-        rank += 1;
+    for mem in std::iter::once(&snapshot.active_memtable).chain(snapshot.immutable_memtables.iter().rev()) {
+        sources.push(Box::new(mem.range::<Vec<u8>, _>(bounds.clone()).map(|(k, v)| Ok((k.clone(), v.clone())))));
     }
-
     for sst in snapshot.sstables.iter().rev() {
-        let entries = sst.range(start, end)?;
-        sources.push(MergeSource { rank, entries });
-        rank += 1;
+        sources.push(Box::new(sst.cursor(lo.clone(), hi.clone())));
     }
+    sources
+}
 
-    let merged = merge_sources(sources);
-    Ok(merged
-        .into_iter()
-        .filter_map(|(k, v)| match v {
-            LsmValue::Value(b) => Some((k, b)),
-            LsmValue::Tombstone => None,
-        })
-        .collect())
+/// A streaming scan over one table, with the table prefix stripped back off.
+fn scan_table<'a>(snapshot: &'a ReadSnapshot, pending: Option<&'a Pending>, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> KvIter<'a> {
+    let (lo, hi) = table_scan_bounds(table, start, end);
+    let prefix_len = keys::table_prefix(table).len();
+    let merged = MergeIter::new(scan_sources(snapshot, pending, &lo, &hi));
+    Box::new(merged.map(move |r| r.map(|(k, v)| (k[prefix_len..].to_vec(), v))))
 }
 
 fn translate_bound(table: TableSpec, bound: Bound<&[u8]>) -> Bound<Vec<u8>> {
@@ -602,14 +792,6 @@ fn table_scan_bounds(table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -
     (lo, hi)
 }
 
-fn as_bound_slice(b: &Bound<Vec<u8>>) -> Bound<&[u8]> {
-    match b {
-        Bound::Included(v) => Bound::Included(v.as_slice()),
-        Bound::Excluded(v) => Bound::Excluded(v.as_slice()),
-        Bound::Unbounded => Bound::Unbounded,
-    }
-}
-
 pub struct LsmReadTx<'a> {
     snapshot: ReadSnapshot,
     _marker: std::marker::PhantomData<&'a LsmStorageBackend>,
@@ -621,16 +803,18 @@ impl StorageReadTx for LsmReadTx<'_> {
     }
 
     fn range(&self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
-        let (lo, hi) = table_scan_bounds(table, start, end);
-        let rows = lookup_range(&self.snapshot, None, as_bound_slice(&lo), as_bound_slice(&hi))?;
-        Ok(rows.into_iter().map(|(k, v)| (keys::strip_table_prefix(table, &k), v)).collect())
+        scan_table(&self.snapshot, None, table, start, end).collect()
+    }
+
+    fn scan<'a>(&'a self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<KvIter<'a>, BknError> {
+        Ok(scan_table(&self.snapshot, None, table, start, end))
     }
 }
 
 pub struct LsmWriteTx<'a> {
     backend: &'a LsmStorageBackend,
     snapshot: ReadSnapshot,
-    pending: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    pending: Pending,
     _guard: std::sync::MutexGuard<'a, ()>,
 }
 
@@ -640,9 +824,11 @@ impl StorageReadTx for LsmWriteTx<'_> {
     }
 
     fn range(&self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError> {
-        let (lo, hi) = table_scan_bounds(table, start, end);
-        let rows = lookup_range(&self.snapshot, Some(&self.pending), as_bound_slice(&lo), as_bound_slice(&hi))?;
-        Ok(rows.into_iter().map(|(k, v)| (keys::strip_table_prefix(table, &k), v)).collect())
+        scan_table(&self.snapshot, Some(&self.pending), table, start, end).collect()
+    }
+
+    fn scan<'a>(&'a self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<KvIter<'a>, BknError> {
+        Ok(scan_table(&self.snapshot, Some(&self.pending), table, start, end))
     }
 }
 
@@ -686,5 +872,81 @@ impl StorageBackend for LsmStorageBackend {
             pending: BTreeMap::new(),
             _guard: guard,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const T: TableSpec = TableSpec("t");
+
+    /// Builds a complete database file exactly as format v1 laid it out:
+    /// one uncompressed, checksum-free SSTable, a manifest, a v1 header.
+    fn write_legacy_database(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+        let file = container::open_container_file(path).unwrap();
+        file.set_len(container::BODY_START).unwrap();
+        let entries: Vec<(Vec<u8>, LsmValue)> = rows.iter().map(|(k, v)| (keys::encode_key(T, k), LsmValue::Value(v.clone()))).collect();
+        let (offset, length) = crate::sstable::write_v1(&file, &entries, 4);
+        let placeholder = Manifest {
+            next_sstable_id: 2,
+            sstables: vec![SstableRef { generation: 1, offset, length }],
+            wal_region_start: 0,
+        };
+        let manifest_offset = offset + length;
+        let len = placeholder.encode().unwrap().len() as u64;
+        let bytes = Manifest { wal_region_start: manifest_offset + len, ..placeholder }.encode().unwrap();
+        container::write_blob_at(&file, manifest_offset, &bytes).unwrap();
+        container::write_legacy_header(&file, 1, manifest_offset, bytes.len() as u64);
+        file.sync_all().unwrap();
+    }
+
+    #[test]
+    fn legacy_v1_database_opens_and_is_upgraded_by_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.bkndb");
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = (0u32..40).map(|i| (i.to_be_bytes().to_vec(), format!("v{i}").into_bytes())).collect();
+        write_legacy_database(&path, &rows);
+
+        {
+            let db = LsmStorageBackend::open(&path).unwrap();
+            let stats = db.stats().unwrap();
+            assert_eq!((stats.sstable_count, stats.legacy_sstable_count), (1, 1));
+            let r = db.begin_read().unwrap();
+            assert_eq!(r.get(T, &7u32.to_be_bytes()).unwrap(), Some(b"v7".to_vec()));
+            assert_eq!(r.range(T, Bound::Unbounded, Bound::Unbounded).unwrap(), rows);
+            let report = db.verify_integrity().unwrap();
+            assert_eq!((report.entries, report.blocks_verified), (40, 0));
+            assert!(report.legacy_blocks_unchecked > 0);
+
+            // New commits land in a v2 SSTable next to the legacy one.
+            let mut w = db.begin_write().unwrap();
+            w.put(T, &100u32.to_be_bytes(), b"new").unwrap();
+            w.delete(T, &0u32.to_be_bytes()).unwrap();
+            w.commit().unwrap();
+            db.force_compact().unwrap();
+            let stats = db.stats().unwrap();
+            assert_eq!((stats.sstable_count, stats.legacy_sstable_count), (1, 0));
+        }
+
+        let db = LsmStorageBackend::open(&path).unwrap();
+        let r = db.begin_read().unwrap();
+        let all = r.range(T, Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(all.len(), 40);
+        assert_eq!(all[0].0, 1u32.to_be_bytes().to_vec());
+        assert_eq!(r.get(T, &100u32.to_be_bytes()).unwrap(), Some(b"new".to_vec()));
+        let report = db.verify_integrity().unwrap();
+        assert_eq!((report.legacy_blocks_unchecked, report.entries), (0, 40));
+    }
+
+    #[test]
+    fn force_compact_upgrades_a_lone_legacy_sstable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.bkndb");
+        write_legacy_database(&path, &[(b"k".to_vec(), b"v".to_vec())]);
+        let db = LsmStorageBackend::open(&path).unwrap();
+        db.force_compact().unwrap();
+        assert_eq!(db.stats().unwrap().legacy_sstable_count, 0);
+        assert_eq!(db.begin_read().unwrap().get(T, b"k").unwrap(), Some(b"v".to_vec()));
     }
 }

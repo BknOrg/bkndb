@@ -15,3 +15,21 @@ fn lsm_backend_satisfies_graph_advanced_algorithms_suite() {
     graph_advanced_algorithms_suite(backend);
 }
 
+
+#[test]
+fn lsm_backend_satisfies_graph_index_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::graph_index_suite(LsmStorageBackend::open(dir.path().join("gidx.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_graph_weighted_path_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::graph_weighted_path_suite(LsmStorageBackend::open(dir.path().join("gwp.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_sync_batch_linked_edges_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::sync_batch_linked_edges_suite(LsmStorageBackend::open(dir.path().join("glink.bkndb")).unwrap());
+}

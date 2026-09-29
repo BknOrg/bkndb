@@ -6,10 +6,10 @@ use crate::relational::db::{
     delete_row_in, get_in, index_lookup_eq_in, index_lookup_prefix_in, index_lookup_range_in, update_row_in, RelTable,
     Row,
 };
-use crate::relational::expr::{compare_values, total_cmp, Acc, Agg, AggregateRow, CmpOp, Expr, Order};
+use crate::relational::expr::{compare_values, resolve, root_column, total_cmp, Acc, Agg, AggregateRow, CmpOp, Expr, Order};
 use crate::relational::schema::{ColumnKind, TableSchema};
 use crate::value::PropValue;
-use crate::{BknError, StorageBackend, StorageReadTx, StorageWriteTx};
+use crate::{BknError, KvIter, StorageBackend, StorageReadTx, StorageWriteTx};
 
 /// A transaction-independent query description: filters (implicitly
 /// ANDed), ordering, paging and projection. Run it through
@@ -87,17 +87,24 @@ impl Query {
         self
     }
 
-    fn check_columns<'q>(&'q self, schema: &TableSchema, extra: impl IntoIterator<Item = &'q str>) -> Result<(), BknError> {
-        let mut names: Vec<&str> = Vec::new();
+    pub(crate) fn check_columns<'q>(&'q self, schema: &TableSchema, extra: impl IntoIterator<Item = &'q str>) -> Result<(), BknError> {
+        // Filters, ordering and grouping may use dotted paths into a column;
+        // projection and aggregates name whole columns.
+        let mut paths: Vec<&str> = Vec::new();
         for f in &self.filters {
-            f.columns(&mut names);
+            f.columns(&mut paths);
         }
-        names.extend(self.order.iter().map(|(c, _)| c.as_str()));
+        paths.extend(self.order.iter().map(|(c, _)| c.as_str()));
+        let mut names: Vec<&str> = Vec::new();
         if let Some(cols) = &self.columns {
             names.extend(cols.iter().map(String::as_str));
         }
         names.extend(extra);
-        match names.into_iter().find(|n| schema.column(n).is_none()) {
+        let unknown = paths
+            .into_iter()
+            .find(|p| root_column(schema, p).is_none())
+            .or_else(|| names.into_iter().find(|n| schema.column(n).is_none()));
+        match unknown {
             Some(unknown) => Err(BknError::SchemaMismatch {
                 table: schema.name().to_string(),
                 message: format!("unknown column '{unknown}'"),
@@ -239,9 +246,10 @@ fn plan(schema: &TableSchema, filters: &[Expr]) -> Access {
 
 type RowIter<'r> = Box<dyn Iterator<Item = Result<Row, BknError>> + 'r>;
 
-fn decode_base_rows(schema: &TableSchema, raw: Vec<(Vec<u8>, Vec<u8>)>) -> RowIter<'static> {
+fn decode_base_rows<'r>(schema: &TableSchema, raw: KvIter<'r>) -> RowIter<'r> {
     let pk_kind = schema.primary_key_column().kind;
-    Box::new(raw.into_iter().map(move |(k, v)| {
+    Box::new(raw.map(move |kv| {
+        let (k, v) = kv?;
         Ok(Row {
             pk: decode_sortable(pk_kind, &k)?,
             values: decode_row(&v)?,
@@ -279,8 +287,7 @@ fn candidates<'r, R: StorageReadTx>(rtx: &'r R, schema: &TableSchema, access: Ac
             // Base-table keys are exactly `sortable(pk)`, so the index-key
             // bound helpers apply unchanged.
             let (lo, hi) = (lower_bound_bytes(&lo)?, upper_bound_bytes(&hi)?);
-            let raw = rtx.range(base_table(schema), as_byte_bound(&lo), as_byte_bound(&hi))?;
-            decode_base_rows(schema, raw)
+            decode_base_rows(schema, rtx.scan(base_table(schema), as_byte_bound(&lo), as_byte_bound(&hi))?)
         }
         Access::IndexPrefix(col, prefix) => {
             Box::new(index_lookup_prefix_in(rtx, schema, &col, &prefix)?.into_iter().map(Ok))
@@ -289,33 +296,36 @@ fn candidates<'r, R: StorageReadTx>(rtx: &'r R, schema: &TableSchema, access: Ac
             Box::new(index_lookup_range_in(rtx, schema, &col, &lo, &hi)?.into_iter().map(Ok))
         }
         Access::Scan => {
-            let raw = rtx.range(base_table(schema), Bound::Unbounded, Bound::Unbounded)?;
-            decode_base_rows(schema, raw)
+            decode_base_rows(schema, rtx.scan(base_table(schema), Bound::Unbounded, Bound::Unbounded)?)
         }
     })
 }
 
-/// Every row matching `query`'s filters, ignoring ordering/paging/projection.
-fn matching_rows<R: StorageReadTx>(rtx: &R, schema: &TableSchema, query: &Query) -> Result<Vec<Row>, BknError> {
-    let mut out = Vec::new();
-    for row in candidates(rtx, schema, plan(schema, &query.filters))? {
-        let row = row?;
-        if query.matches(schema, &row) {
-            out.push(row);
-        }
-    }
-    Ok(out)
+/// Every row matching `query`'s filters, ignoring ordering/paging/projection,
+/// streamed straight from the chosen access path.
+pub(crate) fn matching_rows<'r, R: StorageReadTx>(rtx: &'r R, schema: &'r TableSchema, query: &'r Query) -> Result<RowIter<'r>, BknError> {
+    let rows = candidates(rtx, schema, plan(schema, &query.filters))?;
+    Ok(Box::new(rows.filter(move |row| match row {
+        Ok(row) => query.matches(schema, row),
+        Err(_) => true,
+    })))
 }
 
 // --- Execution (shared by every table/transaction flavor) ---
 
 pub(crate) fn select_in<R: StorageReadTx>(rtx: &R, schema: &TableSchema, query: &Query) -> Result<Vec<Row>, BknError> {
     query.check_columns(schema, [])?;
-    let mut rows = if query.order.is_empty() {
-        // No ordering: stop decoding as soon as offset + limit rows matched.
+    let access = plan(schema, &query.filters);
+    // Scans and pk ranges already yield rows in ascending pk order, so
+    // `ORDER BY pk ASC` over them needs no sort — which keeps keyset
+    // pagination (`pk > last ORDER BY pk LIMIT n`) streaming.
+    let presorted = matches!(access, Access::Scan | Access::PkRange(..))
+        && matches!(query.order.as_slice(), [(c, Order::Asc)] if c == schema.primary_key());
+    let mut rows = if query.order.is_empty() || presorted {
+        // No sort needed: stop decoding as soon as offset + limit rows matched.
         let wanted = query.limit.map(|l| l.saturating_add(query.offset));
         let mut out = Vec::new();
-        for row in candidates(rtx, schema, plan(schema, &query.filters))? {
+        for row in candidates(rtx, schema, access)? {
             if wanted.is_some_and(|w| out.len() >= w) {
                 break;
             }
@@ -327,10 +337,10 @@ pub(crate) fn select_in<R: StorageReadTx>(rtx: &R, schema: &TableSchema, query: 
         out.drain(..query.offset.min(out.len()));
         out
     } else {
-        let mut all = matching_rows(rtx, schema, query)?;
+        let mut all = matching_rows(rtx, schema, query)?.collect::<Result<Vec<_>, _>>()?;
         all.sort_by(|a, b| {
             for (c, order) in &query.order {
-                let ord = total_cmp(a.get(schema, c), b.get(schema, c));
+                let ord = total_cmp(resolve(schema, a, c), resolve(schema, b, c));
                 let ord = if *order == Order::Desc { ord.reverse() } else { ord };
                 if ord.is_ne() {
                     return ord;
@@ -356,7 +366,12 @@ pub(crate) fn select_in<R: StorageReadTx>(rtx: &R, schema: &TableSchema, query: 
 /// projection are ignored, as for SQL `SELECT COUNT(*)`).
 pub(crate) fn count_in<R: StorageReadTx>(rtx: &R, schema: &TableSchema, query: &Query) -> Result<usize, BknError> {
     query.check_columns(schema, [])?;
-    Ok(matching_rows(rtx, schema, query)?.len())
+    let mut n = 0;
+    for row in matching_rows(rtx, schema, query)? {
+        row?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 /// Grouped aggregation over the rows matching `query`'s filters. With an
@@ -369,7 +384,14 @@ pub(crate) fn aggregate_in<R: StorageReadTx>(
     group_by: &[String],
     aggs: &[Agg],
 ) -> Result<Vec<AggregateRow>, BknError> {
-    query.check_columns(schema, group_by.iter().map(String::as_str).chain(aggs.iter().filter_map(Agg::column)))?;
+    query.check_columns(schema, aggs.iter().filter_map(Agg::column))?;
+    // Group keys may be dotted paths into a column, like filters.
+    if let Some(unknown) = group_by.iter().find(|g| root_column(schema, g).is_none()) {
+        return Err(BknError::SchemaMismatch {
+            table: schema.name().to_string(),
+            message: format!("unknown column '{unknown}'"),
+        });
+    }
     for a in aggs {
         a.check(schema)?;
     }
@@ -379,12 +401,13 @@ pub(crate) fn aggregate_in<R: StorageReadTx>(
         groups.push((Vec::new(), aggs.iter().map(Acc::new).collect()));
     }
     for row in matching_rows(rtx, schema, query)? {
+        let row = row?;
         let slot = if group_by.is_empty() {
             0
         } else {
             let key: Vec<PropValue> = group_by
                 .iter()
-                .map(|c| row.get(schema, c).cloned().unwrap_or(PropValue::Null))
+                .map(|c| resolve(schema, &row, c).cloned().unwrap_or(PropValue::Null))
                 .collect();
             let encoded = bincode::serialize(&key).map_err(|e| BknError::Encoding(e.to_string()))?;
             *index.entry(encoded).or_insert_with(|| {

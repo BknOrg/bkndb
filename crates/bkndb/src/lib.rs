@@ -1,7 +1,7 @@
 pub use bkndb_core::*;
 
 #[cfg(feature = "lsm-backend")]
-pub use bkndb_storage_lsm::{LsmOptions, LsmStorageBackend};
+pub use bkndb_storage_lsm::{IntegrityReport, LsmOptions, LsmStats, LsmStorageBackend};
 
 #[cfg(feature = "redb-backend")]
 pub use bkndb_storage_redb::RedbStorageBackend;
@@ -60,6 +60,25 @@ impl BknDb {
     /// it runs; readers are unaffected.
     pub fn compact(&self) -> Result<(), BknError> {
         self.inner.backend().force_compact()
+    }
+
+    /// Writes a consistent, compacted copy of everything committed so far to
+    /// a new `.bkndb` file at `dest` (which must not exist yet), while the
+    /// database stays open for reads and writes.
+    pub fn backup_to<P: AsRef<Path>>(&self, dest: P) -> Result<(), BknError> {
+        self.inner.backend().backup_to(dest)
+    }
+
+    /// File-level size figures (file size, SSTables, WAL, reclaimable
+    /// space). For logical counts (nodes, edges, rows) see [`Db::stats`].
+    pub fn storage_stats(&self) -> Result<LsmStats, BknError> {
+        self.inner.backend().stats()
+    }
+
+    /// Re-reads and checksums every stored byte; returns
+    /// [`BknError::Corruption`] if anything is damaged.
+    pub fn verify_integrity(&self) -> Result<IntegrityReport, BknError> {
+        self.inner.backend().verify_integrity()
     }
 
     /// Convenience helper for joining a list of graph node IDs with a relational table

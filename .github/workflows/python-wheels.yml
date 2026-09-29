@@ -49,9 +49,9 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64, manylinux: auto }
           - { os: ubuntu-latest, target: aarch64, manylinux: auto }
-          - { os: windows-latest, target: x64 }
-          - { os: macos-14, target: x86_64 }
-          - { os: macos-14, target: aarch64 }
+          - { os: windows-latest, target: x64, manylinux: "off" }
+          - { os: macos-14, target: x86_64, manylinux: "off" }
+          - { os: macos-14, target: aarch64, manylinux: "off" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
-          manylinux: ${{ matrix.manylinux || 'off' }}
+          manylinux: ${{ matrix.manylinux }}
           args: --release --out dist
       - uses: actions/upload-artifact@v4
         with:

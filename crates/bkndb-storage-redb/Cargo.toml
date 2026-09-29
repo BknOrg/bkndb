@@ -9,9 +9,9 @@ description = "Redb-backed storage engine backend for BknDb"
 readme = "README.md"
 
 [dependencies]
-bkndb-core = { version = "0.1.0", path = "../bkndb-core" }
+bkndb-core = { version = "0.2.0", path = "../bkndb-core" }
 redb = { workspace = true }
 
 [dev-dependencies]
-bkndb-core = { path = "../bkndb-core", features = ["test-util", "graph", "relational"] }
+bkndb-core = { path = "../bkndb-core", features = ["test-util", "graph", "relational", "search"] }
 tempfile = "3"

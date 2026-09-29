@@ -237,6 +237,100 @@ pub(crate) fn find_shortest_path_in<R: StorageReadTx>(
     Ok(Some(PathResult { steps }))
 }
 
+/// A lowest-cost path and its total cost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeightedPath {
+    pub path: PathResult,
+    pub cost: f64,
+}
+
+/// `f64` ordered by `total_cmp`, for the Dijkstra priority queue.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Cost(f64);
+impl Eq for Cost {}
+impl PartialOrd for Cost {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Cost {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// Dijkstra's lowest-cost path from `start` to `target`. Each edge costs its
+/// numeric (`Int`/`Float`) `weight_property`, or `default_weight` if the edge
+/// has no such numeric property. Weights must be non-negative.
+pub(crate) fn find_weighted_path_in<R: StorageReadTx>(
+    rtx: &R,
+    start: NodeId,
+    target: NodeId,
+    direction: Direction,
+    edge_types: Option<&[&str]>,
+    weight_property: &str,
+    default_weight: f64,
+) -> Result<Option<WeightedPath>, BknError> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let invalid = |w: f64| !(w.is_finite() && w >= 0.0);
+    if invalid(default_weight) {
+        return Err(BknError::Encoding(format!("default edge weight must be finite and >= 0, got {default_weight}")));
+    }
+    if get_node_in(rtx, start)?.is_none() || get_node_in(rtx, target)?.is_none() {
+        return Ok(None);
+    }
+
+    let mut dist: HashMap<NodeId, f64> = HashMap::from([(start, 0.0)]);
+    let mut parent: HashMap<NodeId, (NodeId, EdgeId, String)> = HashMap::new();
+    let mut heap = BinaryHeap::from([Reverse((Cost(0.0), start))]);
+
+    while let Some(Reverse((Cost(d), node))) = heap.pop() {
+        if node == target {
+            break;
+        }
+        if d > dist.get(&node).copied().unwrap_or(f64::INFINITY) {
+            continue; // stale queue entry
+        }
+        for (next, edge_id, edge_type) in neighbors_for_path(rtx, node, direction, edge_types)? {
+            let weight = match crate::graph::db::get_edge_in(rtx, edge_id)?
+                .and_then(|e| e.properties.get(weight_property).cloned())
+            {
+                Some(crate::value::PropValue::Int(i)) => i as f64,
+                Some(crate::value::PropValue::Float(f)) => f,
+                _ => default_weight,
+            };
+            if invalid(weight) {
+                return Err(BknError::Encoding(format!(
+                    "edge {} has invalid weight {weight} (must be finite and >= 0)",
+                    edge_id.0
+                )));
+            }
+            let candidate = d + weight;
+            if candidate < dist.get(&next).copied().unwrap_or(f64::INFINITY) {
+                dist.insert(next, candidate);
+                parent.insert(next, (node, edge_id, edge_type));
+                heap.push(Reverse((Cost(candidate), next)));
+            }
+        }
+    }
+
+    let Some(&cost) = dist.get(&target) else {
+        return Ok(None);
+    };
+    let mut steps = vec![];
+    let mut curr = target;
+    while curr != start {
+        let (prev, edge, edge_type) = parent.get(&curr).cloned().expect("every reached node but start has a parent");
+        steps.push(PathStep { node: curr, via_edge: Some(edge), edge_type: Some(edge_type) });
+        curr = prev;
+    }
+    steps.push(PathStep { node: start, via_edge: None, edge_type: None });
+    steps.reverse();
+    Ok(Some(WeightedPath { path: PathResult { steps }, cost }))
+}
+
 /// Fluent traversal builder over a [`GraphDb`]. Opens one read transaction on `run()`.
 pub struct TraversalBuilder<'a, B: StorageBackend> {
     db: &'a GraphDb<B>,

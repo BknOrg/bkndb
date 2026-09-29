@@ -15,12 +15,17 @@ and :mod:`bkndb.database` are the only places allowed to import from it.
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import enum
 import typing
+import uuid
 
 from ._native.bkndb_ffi import (
     FfiAggregateRow,
     FfiColumn,
+    FfiDbStats,
+    FfiIntegrityReport,
+    FfiStorageStats,
     FfiColumnKind,
     FfiDirection,
     FfiEdgeRecord,
@@ -30,14 +35,47 @@ from ._native.bkndb_ffi import (
     FfiPathResult,
     FfiPathStep,
     FfiPropValue,
+    FfiQueryResult,
     FfiRow,
+    FfiScoredRow,
     FfiTableSchema,
     FfiTraversalHit,
     FfiTypedNeighbor,
 )
 
-#: A property / column value. ``bytearray`` is also accepted on input.
-PropertyValue = typing.Union[None, str, int, float, bool, bytes]
+#: A property / column value: ``None``, ``str``, ``int``, ``float``,
+#: ``bool``, ``bytes``, ``datetime.datetime`` (stored as UTC microseconds),
+#: ``uuid.UUID``, a ``list`` of values or a ``dict`` of ``str`` -> value
+#: (nesting freely, like JSON). ``bytearray`` and ``tuple`` are also
+#: accepted on input.
+PropertyValue = typing.Union[
+    None,
+    str,
+    int,
+    float,
+    bool,
+    bytes,
+    datetime.datetime,
+    uuid.UUID,
+    typing.List[typing.Any],
+    typing.Dict[str, typing.Any],
+]
+
+_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+_MICRO = datetime.timedelta(microseconds=1)
+_U64 = (1 << 64) - 1
+
+
+def datetime_to_micros(value: datetime.datetime) -> int:
+    """Microseconds since the epoch; a naive datetime is taken as UTC."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=datetime.timezone.utc)
+    return (value - _EPOCH) // _MICRO
+
+
+def micros_to_datetime(micros: int) -> datetime.datetime:
+    """An aware UTC datetime."""
+    return _EPOCH + datetime.timedelta(microseconds=micros)
 #: Properties as returned by bkndb.
 Properties = typing.Dict[str, PropertyValue]
 #: Properties as accepted by bkndb: any mapping (so ``dict[str, str]`` fits).
@@ -62,12 +100,33 @@ def to_ffi_value(value: typing.Union[PropertyValue, bytearray]) -> typing.Any:
         return FfiPropValue.STR(value)
     if isinstance(value, (bytes, bytearray)):
         return FfiPropValue.BYTES(bytes(value))
+    if isinstance(value, datetime.datetime):
+        return FfiPropValue.TIMESTAMP(datetime_to_micros(value))
+    if isinstance(value, uuid.UUID):
+        return FfiPropValue.UUID(hi=value.int >> 64, lo=value.int & _U64)
+    if isinstance(value, (list, tuple)):
+        return FfiPropValue.LIST([to_ffi_value(v) for v in value])
+    if isinstance(value, typing.Mapping):
+        items = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise TypeError(f"map keys must be str, got {type(k).__name__}")
+            items[k] = to_ffi_value(v)
+        return FfiPropValue.MAP(items)
     raise TypeError(f"unsupported property value type: {type(value).__name__}")
 
 
 def from_ffi_value(value: typing.Any) -> PropertyValue:
     if value.is_null():
         return None
+    if value.is_timestamp():
+        return micros_to_datetime(value[0])
+    if value.is_uuid():
+        return uuid.UUID(int=(value.hi << 64) | value.lo)
+    if value.is_list():
+        return [from_ffi_value(v) for v in value[0]]
+    if value.is_map():
+        return {k: from_ffi_value(v) for k, v in value[0].items()}
     return value[0]
 
 
@@ -196,6 +255,29 @@ class Path:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class WeightedPath:
+    """A lowest-cost path (see :meth:`bkndb.Database.find_weighted_path`)."""
+
+    path: Path
+    cost: float
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class NewNode:
+    """In :meth:`bkndb.Database.sync_batch` edges, refers to the node at
+    ``index`` (0-based) of the same batch's ``nodes`` — whose id isn't known
+    until the batch runs::
+
+        db.sync_batch(
+            nodes=[("File", {}), ("Function", {})],
+            edges=[(NewNode(0), "DEFINES", NewNode(1), {}), (repo_id, "CONTAINS", NewNode(0), {})],
+        )
+    """
+
+    index: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Hub:
     node_id: int
     degree: int
@@ -223,11 +305,21 @@ _KINDS: typing.Dict[typing.Any, FfiColumnKind] = {
     float: FfiColumnKind.FLOAT,
     str: FfiColumnKind.STR,
     bytes: FfiColumnKind.BYTES,
+    datetime.datetime: FfiColumnKind.TIMESTAMP,
+    uuid.UUID: FfiColumnKind.UUID,
+    list: FfiColumnKind.LIST,
+    dict: FfiColumnKind.MAP,
     "bool": FfiColumnKind.BOOL,
     "int": FfiColumnKind.INT,
     "float": FfiColumnKind.FLOAT,
     "str": FfiColumnKind.STR,
     "bytes": FfiColumnKind.BYTES,
+    "timestamp": FfiColumnKind.TIMESTAMP,
+    "datetime": FfiColumnKind.TIMESTAMP,
+    "uuid": FfiColumnKind.UUID,
+    "list": FfiColumnKind.LIST,
+    "map": FfiColumnKind.MAP,
+    "dict": FfiColumnKind.MAP,
 }
 _KIND_NAMES = {
     FfiColumnKind.BOOL: "bool",
@@ -235,6 +327,10 @@ _KIND_NAMES = {
     FfiColumnKind.FLOAT: "float",
     FfiColumnKind.STR: "str",
     FfiColumnKind.BYTES: "bytes",
+    FfiColumnKind.TIMESTAMP: "timestamp",
+    FfiColumnKind.UUID: "uuid",
+    FfiColumnKind.LIST: "list",
+    FfiColumnKind.MAP: "map",
 }
 
 
@@ -360,3 +456,131 @@ class AggregateRow:
             group=tuple(from_ffi_value(v) for v in record.group),
             values=tuple(from_ffi_value(v) for v in record.values),
         )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class StorageStats:
+    """File-level figures of an on-disk database (see :attr:`DbStats.storage`)."""
+
+    #: Size of the ``.bkndb`` file.
+    file_bytes: int
+    #: On-disk sorted segments; many of them means compaction is due.
+    sstable_count: int
+    #: Segments still in the older, checksum-less format (upgraded by :meth:`bkndb.Database.compact`).
+    legacy_sstable_count: int
+    sstable_bytes: int
+    #: Stored entries including superseded versions and deletion markers.
+    sstable_entries: int
+    #: Recent writes buffered in memory (durable in the write-ahead log).
+    memtable_entries: int
+    memtable_bytes: int
+    wal_bytes: int
+    #: Dead space that :meth:`bkndb.Database.compact` would give back.
+    reclaimable_bytes: int
+
+    @classmethod
+    def _from_ffi(cls, s: FfiStorageStats) -> "StorageStats":
+        return cls(**{f.name: getattr(s, f.name) for f in dataclasses.fields(cls)})
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DbStats:
+    """What :meth:`bkndb.Database.stats` reports."""
+
+    nodes: int
+    edges: int
+    #: Row count per relational table.
+    tables: typing.Mapping[str, int] = dataclasses.field(hash=False)
+    #: ``None`` for in-memory databases.
+    storage: typing.Optional[StorageStats] = None
+
+    @classmethod
+    def _from_ffi(cls, s: FfiDbStats) -> "DbStats":
+        return cls(
+            nodes=s.nodes,
+            edges=s.edges,
+            tables={t.table: t.rows for t in s.tables},
+            storage=StorageStats._from_ffi(s.storage) if s.storage is not None else None,
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class IntegrityReport:
+    """What :meth:`bkndb.Database.verify_integrity` checked."""
+
+    sstables_checked: int
+    #: Blocks whose checksum was recomputed and matched.
+    blocks_verified: int
+    #: Blocks in the older format, which carry no checksum (decoded, but not checksummed).
+    legacy_blocks_unchecked: int
+    entries: int
+    wal_records: int
+
+    @classmethod
+    def _from_ffi(cls, r: FfiIntegrityReport) -> "IntegrityReport":
+        return cls(**{f.name: getattr(r, f.name) for f in dataclasses.fields(cls)})
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class QueryResult:
+    """What :meth:`bkndb.Database.sql` / :meth:`bkndb.Database.graph_query`
+    return: column names, rows (tuples, in column order) and, for writes,
+    how many rows were affected. Iterating yields the rows."""
+
+    columns: typing.Tuple[str, ...]
+    rows: typing.List[typing.Tuple[typing.Any, ...]] = dataclasses.field(hash=False)
+    affected: int = 0
+
+    @classmethod
+    def _from_ffi(cls, r: FfiQueryResult) -> "QueryResult":
+        return cls(
+            columns=tuple(r.columns),
+            rows=[tuple(from_ffi_value(v) for v in row) for row in r.rows],
+            affected=r.affected,
+        )
+
+    def __iter__(self) -> typing.Iterator[typing.Tuple[typing.Any, ...]]:
+        return iter(self.rows)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def dicts(self) -> typing.List[typing.Dict[str, typing.Any]]:
+        """The rows as ``{column: value}`` dicts."""
+        return [dict(zip(self.columns, row)) for row in self.rows]
+
+    def scalar(self) -> typing.Any:
+        """The first column of the first row (``None`` if there are no rows)."""
+        return self.rows[0][0] if self.rows and self.rows[0] else None
+
+    def column(self, name: str) -> typing.List[typing.Any]:
+        """Every value of one column."""
+        i = self.columns.index(name)
+        return [row[i] for row in self.rows]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ScoredRow:
+    """A search hit (see :meth:`bkndb.Database.search_text` and
+    :meth:`bkndb.Database.search_vector`)."""
+
+    row: "Row"
+    #: BM25 relevance for text; cosine similarity / dot product / Euclidean
+    #: distance for vectors.
+    score: float
+
+    @classmethod
+    def _from_ffi(cls, s: FfiScoredRow) -> "ScoredRow":
+        return cls(row=Row._from_ffi(s.row), score=s.score)
+
+
+def pack_vector(values: typing.Iterable[float]) -> bytes:
+    """Packs an embedding as little-endian float32 bytes — the compact way to
+    store vectors for :meth:`bkndb.Database.search_vector` (4 bytes per
+    dimension, versus ~12 for a list of floats). Accepts any iterable of
+    numbers, including a NumPy array."""
+    import struct
+
+    floats = [float(v) for v in values]
+    return struct.pack(f"<{len(floats)}f", *floats)
+

@@ -42,7 +42,7 @@ Add `bkndb` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bkndb = "0.1"
+bkndb = "0.2"
 ```
 
 ### Feature Flags
@@ -159,4 +159,4 @@ fn analyze(db: &BknDb, start: NodeId, target: NodeId) -> Result<(), Box<dyn std:
 
 ## License
 
-Licensed under the Apache License, Version 2.0 ([LICENSE](https://github.com/BknOrg/bkn-db/blob/main/LICENSE) or <http://www.apache.org/licenses/LICENSE-2.0>).
+Licensed under the Apache License, Version 2.0 ([LICENSE](https://github.com/BknOrg/bkndb/blob/main/LICENSE) or <http://www.apache.org/licenses/LICENSE-2.0>).

@@ -8,6 +8,10 @@ use crate::BknError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TableSpec(pub &'static str);
 
+/// A lazily-evaluated, ascending stream of `(key, value)` pairs from one
+/// table — see [`StorageReadTx::scan`].
+pub type KvIter<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), BknError>> + 'a>;
+
 pub trait StorageBackend: Send + Sync {
     type ReadTx<'a>: StorageReadTx
     where
@@ -35,6 +39,16 @@ pub trait StorageReadTx {
         start: Bound<&[u8]>,
         end: Bound<&[u8]>,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BknError>;
+
+    /// Same rows as [`range`](Self::range), but produced one at a time, so a
+    /// caller that stops early (a `LIMIT`) or only folds over the rows (a
+    /// `COUNT`) never holds the whole range in memory.
+    ///
+    /// The default materializes `range` up front; backends that can read
+    /// incrementally override it.
+    fn scan<'a>(&'a self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<KvIter<'a>, BknError> {
+        Ok(Box::new(self.range(table, start, end)?.into_iter().map(Ok)))
+    }
 }
 
 pub trait StorageWriteTx: StorageReadTx {

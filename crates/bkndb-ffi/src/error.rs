@@ -18,6 +18,10 @@ pub enum FfiBknError {
     SchemaMismatch { table: String, message: String },
     #[error("Constraint violation in table '{table}': {message}")]
     ConstraintViolation { table: String, message: String },
+    #[error("Data corruption detected: {message}")]
+    Corruption { message: String },
+    #[error("Invalid query: {message}")]
+    InvalidQuery { message: String },
     #[error("The database has been closed")]
     DatabaseClosed,
     #[error("A transaction is open on this database; use it, or commit/roll it back first")]
@@ -44,6 +48,8 @@ impl From<bkndb_core::BknError> for FfiBknError {
             bkndb_core::BknError::ConstraintViolation { table, message } => {
                 FfiBknError::ConstraintViolation { table, message }
             }
+            bkndb_core::BknError::Corruption(message) => FfiBknError::Corruption { message },
+            bkndb_core::BknError::InvalidQuery(message) => FfiBknError::InvalidQuery { message },
         }
     }
 }

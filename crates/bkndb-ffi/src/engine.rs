@@ -8,12 +8,16 @@ use bkndb_core::relational::{Agg, Query, TableSchema};
 use bkndb_core::Db;
 
 use crate::error::FfiBknError;
+use crate::lang::{params, FfiQueryResult};
 use crate::ops::{self, FfiProps};
-use crate::relational::{FfiAgg, FfiAggregateRow, FfiQuery, FfiRow, FfiTableSchema};
+use crate::relational::{
+    filter_expr, FfiAgg, FfiAggregateRow, FfiExprNode, FfiQuery, FfiRow, FfiScoredRow, FfiTableSchema, FfiVectorMetric,
+};
 use crate::transaction::{BknDbTransaction, TxWorker, Worker};
 use crate::types::{
-    FfiDirection, FfiEdgeInput, FfiEdgeRecord, FfiHubRecord, FfiLsmOptions, FfiNeighbor, FfiNodeInput, FfiNodeRecord,
-    FfiPathResult, FfiPropValue, FfiSyncBatch, FfiSyncResult, FfiTraversalHit, FfiTypedNeighbor,
+    FfiDbStats, FfiDirection, FfiEdgeInput, FfiEdgeRecord, FfiHubRecord, FfiIntegrityReport, FfiLsmOptions, FfiNeighbor, FfiNodeInput, FfiNodeRecord,
+    FfiPathResult, FfiPropValue, FfiPropertyIndex, FfiSyncBatch, FfiSyncResult, FfiTraversalHit, FfiTypedNeighbor,
+    FfiTableCount, FfiWeightedPath,
 };
 
 enum Backend {
@@ -87,7 +91,8 @@ impl BknDbEngine {
         let opts = LsmOptions {
             memtable_flush_bytes: usize::try_from(options.memtable_flush_bytes).unwrap_or(usize::MAX),
             compaction_trigger_files: options.compaction_trigger_files.max(2) as usize,
-            ..LsmOptions::default()
+            block_size_bytes: options.block_size_bytes.map_or(LsmOptions::default().block_size_bytes, |b| b.max(64) as usize),
+            compression: options.compression.unwrap_or(true),
         };
         Ok(Self::wrap(Backend::Disk(Db::new(LsmStorageBackend::open_with_options(path, opts)?))))
     }
@@ -124,6 +129,82 @@ impl BknDbEngine {
             Some(Backend::Mem(_)) => Ok(()),
             None => Err(FfiBknError::DatabaseClosed),
         }
+    }
+
+    /// Writes a consistent, compacted copy of everything committed so far to
+    /// a new file at `dest` (which must not exist), without blocking readers
+    /// or writers. On-disk databases only.
+    pub fn backup(&self, dest: String) -> Result<(), FfiBknError> {
+        let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(Backend::Disk(db)) => Ok(db.backend().backup_to(dest)?),
+            Some(Backend::Mem(_)) => Err(FfiBknError::InvalidArgument {
+                message: "backup needs an on-disk database; this one is in memory".to_string(),
+            }),
+            None => Err(FfiBknError::DatabaseClosed),
+        }
+    }
+
+    /// Node/edge/row counts (by scanning, from one snapshot) plus file-level
+    /// storage figures for on-disk databases.
+    pub fn stats(&self) -> Result<FfiDbStats, FfiBknError> {
+        let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        let (logical, storage) = match guard.as_ref() {
+            Some(Backend::Disk(db)) => (db.stats()?, Some(db.backend().stats()?.into())),
+            Some(Backend::Mem(db)) => (db.stats()?, None),
+            None => return Err(FfiBknError::DatabaseClosed),
+        };
+        Ok(FfiDbStats {
+            nodes: logical.nodes,
+            edges: logical.edges,
+            tables: logical.tables.into_iter().map(|(table, rows)| FfiTableCount { table, rows }).collect(),
+            storage,
+        })
+    }
+
+    /// Re-reads and checksums every stored byte, failing with `Corruption`
+    /// on the first damaged structure.
+    pub fn verify_integrity(&self) -> Result<FfiIntegrityReport, FfiBknError> {
+        let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(Backend::Disk(db)) => Ok(db.backend().verify_integrity()?.into()),
+            Some(Backend::Mem(_)) => Ok(bkndb::IntegrityReport::default().into()),
+            None => Err(FfiBknError::DatabaseClosed),
+        }
+    }
+
+    /// Runs one SQL statement (see the crate docs of `bkndb_core::lang::sql`):
+    /// a `SELECT` against a snapshot, anything else in its own atomic write
+    /// transaction. Parameters: `?`/`?N`/`$N` from `positional`, `:name` from
+    /// `named`.
+    #[uniffi::method(default(positional = [], named = None))]
+    pub fn sql(
+        &self,
+        query: String,
+        positional: Vec<FfiPropValue>,
+        named: Option<HashMap<String, FfiPropValue>>,
+    ) -> Result<FfiQueryResult, FfiBknError> {
+        let params = params(positional, named);
+        let read_only = bkndb_core::lang::sql::parse(&query)?.is_read_only();
+        let result = if read_only {
+            read!(self, |r| r.relational().sql(&query, params))?
+        } else {
+            write!(self, |b| b.relational().sql(&query, params))?
+        };
+        Ok(result.into())
+    }
+
+    /// Runs a graph `MATCH ... RETURN ...` query against a snapshot.
+    /// Parameters: `$name` from `named`, `$N`/`?` from `positional`.
+    #[uniffi::method(default(positional = [], named = None))]
+    pub fn graph_query(
+        &self,
+        query: String,
+        positional: Vec<FfiPropValue>,
+        named: Option<HashMap<String, FfiPropValue>>,
+    ) -> Result<FfiQueryResult, FfiBknError> {
+        let params = params(positional, named);
+        Ok(read!(self, |r| r.graph().query(&query, params))?.into())
     }
 
     /// Opens an explicit write transaction. Only one can be open at a time;
@@ -221,7 +302,62 @@ impl BknDbEngine {
         write!(self, |b| ops::update_edge(b, id, set, unset))
     }
 
+    // ---- graph: indexes ----
+
+    /// Ids of every node with `label`, ascending.
+    pub fn nodes_by_label(&self, label: String) -> Result<Vec<u64>, FfiBknError> {
+        read!(self, |r| ops::nodes_by_label(r, &label))
+    }
+
+    /// Number of nodes with `label`.
+    pub fn count_nodes(&self, label: String) -> Result<u64, FfiBknError> {
+        Ok(self.nodes_by_label(label)?.len() as u64)
+    }
+
+    /// Ids of nodes with `label` whose `property` equals `value`, ascending.
+    /// A lookup when the property is indexed (`create_node_index`), else a
+    /// scan of the label's nodes.
+    pub fn find_nodes(&self, label: String, property: String, value: FfiPropValue) -> Result<Vec<u64>, FfiBknError> {
+        let value = value.into();
+        read!(self, |r| ops::find_nodes(r, &label, &property, value))
+    }
+
+    /// Indexes `property` of nodes with `label` (backfilled immediately;
+    /// only Int/Str values are indexed). Returns `false` if it already existed.
+    pub fn create_node_index(&self, label: String, property: String) -> Result<bool, FfiBknError> {
+        write!(self, |b| ops::set_node_index(b, &label, &property, true))
+    }
+
+    pub fn drop_node_index(&self, label: String, property: String) -> Result<bool, FfiBknError> {
+        write!(self, |b| ops::set_node_index(b, &label, &property, false))
+    }
+
+    pub fn list_node_indexes(&self) -> Result<Vec<FfiPropertyIndex>, FfiBknError> {
+        read!(self, |r| ops::node_indexes(r))
+    }
+
+    /// Rebuilds every graph index. Only needed once for databases created
+    /// by versions without graph indexes (lookups work without it, but scan).
+    pub fn rebuild_graph_indexes(&self) -> Result<(), FfiBknError> {
+        write!(self, |b| ops::rebuild_graph_indexes(b))
+    }
+
     // ---- graph: traversal ----
+
+    /// Lowest-cost path (Dijkstra): each edge costs its numeric
+    /// `weight_property`, or `default_weight` when it has none. Weights must
+    /// be non-negative.
+    pub fn find_weighted_path(
+        &self,
+        start: u64,
+        target: u64,
+        direction: FfiDirection,
+        edge_types: Option<Vec<String>>,
+        weight_property: String,
+        default_weight: f64,
+    ) -> Result<Option<FfiWeightedPath>, FfiBknError> {
+        read!(self, |r| ops::weighted_path(r, start, target, direction.into(), edge_types, &weight_property, default_weight))
+    }
 
     /// Returns outgoing neighbors for `node` along edges of type `edge_type`.
     pub fn neighbors_out(&self, node: u64, edge_type: String) -> Result<Vec<FfiNeighbor>, FfiBknError> {
@@ -392,5 +528,55 @@ impl BknDbEngine {
     pub fn delete_rows(&self, table: String, query: FfiQuery) -> Result<u64, FfiBknError> {
         let query = Query::try_from(query)?;
         write!(self, |b| ops::delete_rows(b, &table, &query))
+    }
+
+    // ---- search ----
+
+    /// Builds a full-text (BM25) index over a text column, backfilling
+    /// existing rows; `false` if it already exists.
+    pub fn create_fulltext_index(&self, table: String, column: String) -> Result<bool, FfiBknError> {
+        write!(self, |b| b.relational().create_fulltext_index(&table, &column))
+    }
+
+    pub fn drop_fulltext_index(&self, table: String, column: String) -> Result<bool, FfiBknError> {
+        write!(self, |b| b.relational().drop_fulltext_index(&table, &column))
+    }
+
+    pub fn list_fulltext_indexes(&self, table: String) -> Result<Vec<String>, FfiBknError> {
+        read!(self, |r| r.relational().fulltext_indexes(&table))
+    }
+
+    /// Up to `limit` rows whose `column` best matches `query` (BM25).
+    /// `word*` is a prefix match; `match_all` requires every word.
+    #[uniffi::method(default(match_all = false, filter = []))]
+    pub fn search_text(
+        &self,
+        table: String,
+        column: String,
+        query: String,
+        limit: u32,
+        match_all: bool,
+        filter: Vec<FfiExprNode>,
+    ) -> Result<Vec<FfiScoredRow>, FfiBknError> {
+        let filter = filter_expr(filter)?;
+        let hits = read!(self, |r| r.relational().search_text(&table, &column, &query, limit as usize, match_all, filter.as_ref()))?;
+        Ok(hits.into_iter().map(Into::into).collect())
+    }
+
+    /// The `limit` rows whose embedding in `column` (a list of numbers, or
+    /// bytes of little-endian f32s) is nearest to `vector`.
+    #[uniffi::method(default(filter = []))]
+    pub fn search_vector(
+        &self,
+        table: String,
+        column: String,
+        vector: Vec<f32>,
+        limit: u32,
+        metric: FfiVectorMetric,
+        filter: Vec<FfiExprNode>,
+    ) -> Result<Vec<FfiScoredRow>, FfiBknError> {
+        let filter = filter_expr(filter)?;
+        let hits = read!(self, |r| r.relational().search_vector(&table, &column, &vector, limit as usize, metric.into(), filter.as_ref()))?;
+        Ok(hits.into_iter().map(Into::into).collect())
     }
 }

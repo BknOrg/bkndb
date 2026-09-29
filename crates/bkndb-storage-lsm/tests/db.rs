@@ -51,3 +51,33 @@ fn lsm_backend_satisfies_hybrid_query_suite() {
     let dir = tempfile::tempdir().unwrap();
     bkndb_core::test_util::hybrid_query_suite(LsmStorageBackend::open(dir.path().join("hybrid_query.bkndb")).unwrap());
 }
+
+#[test]
+fn lsm_backend_satisfies_db_stats_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::db_stats_suite(LsmStorageBackend::open(dir.path().join("stats.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_value_types_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::value_types_suite(bkndb_storage_lsm::LsmStorageBackend::open(dir.path().join("types.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_sql_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::sql_suite(bkndb_storage_lsm::LsmStorageBackend::open(dir.path().join("sql.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_graph_query_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::graph_query_suite(bkndb_storage_lsm::LsmStorageBackend::open(dir.path().join("gq.bkndb")).unwrap());
+}
+
+#[test]
+fn lsm_backend_satisfies_search_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::search_suite(bkndb_storage_lsm::LsmStorageBackend::open(dir.path().join("search.bkndb")).unwrap());
+}

@@ -15,6 +15,11 @@ pub enum ColumnKind {
     Float,
     Str,
     Bytes,
+    // Appended (catalog entries are serialized by variant index).
+    Timestamp,
+    Uuid,
+    List,
+    Map,
 }
 
 impl ColumnKind {
@@ -27,13 +32,17 @@ impl ColumnKind {
             PropValue::Float(_) => ColumnKind::Float,
             PropValue::Str(_) => ColumnKind::Str,
             PropValue::Bytes(_) => ColumnKind::Bytes,
+            PropValue::Timestamp(_) => ColumnKind::Timestamp,
+            PropValue::Uuid(_) => ColumnKind::Uuid,
+            PropValue::List(_) => ColumnKind::List,
+            PropValue::Map(_) => ColumnKind::Map,
         }
     }
 
     /// Whether values of this kind can be a primary key or be indexed
     /// (only these have a sortable byte encoding).
     pub fn is_keyable(self) -> bool {
-        matches!(self, ColumnKind::Int | ColumnKind::Str)
+        matches!(self, ColumnKind::Int | ColumnKind::Str | ColumnKind::Timestamp | ColumnKind::Uuid)
     }
 }
 

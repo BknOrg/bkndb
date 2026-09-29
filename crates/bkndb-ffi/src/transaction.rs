@@ -18,6 +18,7 @@ use bkndb_core::relational::{Query, TableSchema};
 use bkndb_core::{BknError, Db, DbWriteBatch, StorageBackend};
 
 use crate::error::FfiBknError;
+use crate::lang::FfiQueryResult;
 use crate::ops::{self, FfiProps};
 use crate::relational::{FfiQuery, FfiRow, FfiTableSchema};
 use crate::types::{FfiDirection, FfiEdgeInput, FfiEdgeRecord, FfiNodeInput, FfiNodeRecord, FfiPropValue, FfiTypedNeighbor};
@@ -205,6 +206,32 @@ impl BknDbTransaction {
         self.end(true)
     }
 
+    /// Runs one SQL statement inside this transaction (it sees the
+    /// transaction's own writes). See `BknDbEngine::sql`.
+    #[uniffi::method(default(positional = [], named = None))]
+    pub fn sql(
+        &self,
+        query: String,
+        positional: Vec<FfiPropValue>,
+        named: Option<HashMap<String, FfiPropValue>>,
+    ) -> Result<FfiQueryResult, FfiBknError> {
+        let params = crate::lang::params(positional, named);
+        Ok(in_tx!(self, |b| b.relational().sql(&query, params))?.into())
+    }
+
+    /// Runs a graph `MATCH` query inside this transaction. See
+    /// `BknDbEngine::graph_query`.
+    #[uniffi::method(default(positional = [], named = None))]
+    pub fn graph_query(
+        &self,
+        query: String,
+        positional: Vec<FfiPropValue>,
+        named: Option<HashMap<String, FfiPropValue>>,
+    ) -> Result<FfiQueryResult, FfiBknError> {
+        let params = crate::lang::params(positional, named);
+        Ok(in_tx!(self, |b| b.graph().query(&query, params))?.into())
+    }
+
     /// Discards every write of this transaction.
     pub fn rollback(&self) -> Result<(), FfiBknError> {
         match self.end(false) {
@@ -254,6 +281,16 @@ impl BknDbTransaction {
 
     pub fn neighbors(&self, node: u64, direction: FfiDirection, edge_type: Option<String>) -> Result<Vec<FfiTypedNeighbor>, FfiBknError> {
         in_tx!(self, |b| ops::tx_neighbors(b, node, direction.into(), edge_type.as_deref()))
+    }
+
+    /// Ids of every node with `label` (including ones created in this transaction).
+    pub fn nodes_by_label(&self, label: String) -> Result<Vec<u64>, FfiBknError> {
+        in_tx!(self, |b| ops::tx_nodes_by_label(b, &label))
+    }
+
+    pub fn find_nodes(&self, label: String, property: String, value: FfiPropValue) -> Result<Vec<u64>, FfiBknError> {
+        let value: bkndb_core::value::PropValue = value.into();
+        in_tx!(self, |b| ops::tx_find_nodes(b, &label, &property, value))
     }
 
     pub fn delete_node(&self, id: u64) -> Result<(), FfiBknError> {

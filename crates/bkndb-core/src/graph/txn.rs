@@ -86,6 +86,36 @@ impl<'s, W: StorageWriteTx> BatchGraph<'s, W> {
         delete_node_in(self.wtx, id)
     }
 
+    /// See [`crate::graph::GraphDb::query`] (sees this batch's writes).
+    pub fn query(&self, text: &str, params: impl Into<crate::lang::Params>) -> Result<crate::lang::QueryResult, BknError> {
+        crate::lang::graph::run(&*self.wtx, text, &params.into())
+    }
+
+    /// See [`crate::graph::GraphDb::nodes_by_label`] (sees this batch's writes).
+    pub fn nodes_by_label(&self, label: &str) -> Result<Vec<NodeId>, BknError> {
+        crate::graph::index::nodes_by_label_in(&*self.wtx, label)
+    }
+
+    /// See [`crate::graph::GraphDb::find_nodes`].
+    pub fn find_nodes(&self, label: &str, property: &str, value: &crate::value::PropValue) -> Result<Vec<NodeId>, BknError> {
+        crate::graph::index::find_nodes_in(&*self.wtx, label, property, value)
+    }
+
+    /// See [`crate::graph::GraphDb::create_property_index`].
+    pub fn create_property_index(&mut self, label: &str, property: &str) -> Result<bool, BknError> {
+        crate::graph::index::create_property_index_in(self.wtx, label, property)
+    }
+
+    /// See [`crate::graph::GraphDb::drop_property_index`].
+    pub fn drop_property_index(&mut self, label: &str, property: &str) -> Result<bool, BknError> {
+        crate::graph::index::drop_property_index_in(self.wtx, label, property)
+    }
+
+    /// See [`crate::graph::GraphDb::rebuild_indexes`].
+    pub fn rebuild_indexes(&mut self) -> Result<(), BknError> {
+        crate::graph::index::rebuild_indexes_in(self.wtx)
+    }
+
     /// See [`crate::graph::GraphDb::update_node_properties`].
     pub fn update_node_properties(&mut self, id: NodeId, mutate: impl FnOnce(&mut Properties)) -> Result<(), BknError> {
         crate::graph::db::update_node_properties_in(self.wtx, id, mutate)
@@ -159,6 +189,21 @@ impl<'s, W: StorageWriteTx> BatchGraph<'s, W> {
         crate::graph::traversal::find_shortest_path_in(self.wtx, start, target, direction, edge_types)
     }
 
+    /// Lowest-cost path (Dijkstra) where each edge costs its numeric
+    /// `weight_property`, or `default_weight` when absent. See
+    /// [`crate::graph::WeightedPath`].
+    pub fn find_weighted_path(
+        &self,
+        start: NodeId,
+        target: NodeId,
+        direction: crate::graph::traversal::Direction,
+        edge_types: Option<&[&str]>,
+        weight_property: &str,
+        default_weight: f64,
+    ) -> Result<Option<crate::graph::traversal::WeightedPath>, BknError> {
+        crate::graph::traversal::find_weighted_path_in(&*self.wtx, start, target, direction, edge_types, weight_property, default_weight)
+    }
+
     pub fn top_hubs(
         &self,
         limit: usize,
@@ -185,6 +230,26 @@ pub struct ReadGraph<'s, R: StorageReadTx> {
 impl<'s, R: StorageReadTx> ReadGraph<'s, R> {
     pub(crate) fn new(rtx: &'s R) -> Self {
         Self { rtx }
+    }
+
+    /// See [`crate::graph::GraphDb::query`].
+    pub fn query(&self, text: &str, params: impl Into<crate::lang::Params>) -> Result<crate::lang::QueryResult, BknError> {
+        crate::lang::graph::run(self.rtx, text, &params.into())
+    }
+
+    /// See [`crate::graph::GraphDb::nodes_by_label`].
+    pub fn nodes_by_label(&self, label: &str) -> Result<Vec<NodeId>, BknError> {
+        crate::graph::index::nodes_by_label_in(self.rtx, label)
+    }
+
+    /// See [`crate::graph::GraphDb::find_nodes`].
+    pub fn find_nodes(&self, label: &str, property: &str, value: &crate::value::PropValue) -> Result<Vec<NodeId>, BknError> {
+        crate::graph::index::find_nodes_in(self.rtx, label, property, value)
+    }
+
+    /// See [`crate::graph::GraphDb::property_indexes`].
+    pub fn property_indexes(&self) -> Result<Vec<(String, String)>, BknError> {
+        crate::graph::index::property_indexes_in(self.rtx)
     }
 
     pub fn get_node(&self, id: NodeId) -> Result<Option<NodeRecord>, BknError> {
@@ -231,6 +296,21 @@ impl<'s, R: StorageReadTx> ReadGraph<'s, R> {
         edge_types: Option<&[&str]>,
     ) -> Result<Option<crate::graph::traversal::PathResult>, BknError> {
         crate::graph::traversal::find_shortest_path_in(self.rtx, start, target, direction, edge_types)
+    }
+
+    /// Lowest-cost path (Dijkstra) where each edge costs its numeric
+    /// `weight_property`, or `default_weight` when absent. See
+    /// [`crate::graph::WeightedPath`].
+    pub fn find_weighted_path(
+        &self,
+        start: NodeId,
+        target: NodeId,
+        direction: crate::graph::traversal::Direction,
+        edge_types: Option<&[&str]>,
+        weight_property: &str,
+        default_weight: f64,
+    ) -> Result<Option<crate::graph::traversal::WeightedPath>, BknError> {
+        crate::graph::traversal::find_weighted_path_in(self.rtx, start, target, direction, edge_types, weight_property, default_weight)
     }
 
     pub fn top_hubs(

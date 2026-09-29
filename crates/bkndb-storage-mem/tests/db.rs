@@ -39,3 +39,28 @@ fn mem_backend_satisfies_sync_batch_upsert_suite() {
 fn mem_backend_satisfies_hybrid_query_suite() {
     bkndb_core::test_util::hybrid_query_suite(MemoryStorageBackend::new());
 }
+
+#[test]
+fn mem_backend_satisfies_db_stats_suite() {
+    bkndb_core::test_util::db_stats_suite(MemoryStorageBackend::new());
+}
+
+#[test]
+fn mem_backend_satisfies_value_types_suite() {
+    bkndb_core::test_util::value_types_suite(bkndb_storage_mem::MemoryStorageBackend::new());
+}
+
+#[test]
+fn mem_backend_satisfies_sql_suite() {
+    bkndb_core::test_util::sql_suite(bkndb_storage_mem::MemoryStorageBackend::new());
+}
+
+#[test]
+fn mem_backend_satisfies_graph_query_suite() {
+    bkndb_core::test_util::graph_query_suite(bkndb_storage_mem::MemoryStorageBackend::new());
+}
+
+#[test]
+fn mem_backend_satisfies_search_suite() {
+    bkndb_core::test_util::search_suite(bkndb_storage_mem::MemoryStorageBackend::new());
+}

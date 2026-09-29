@@ -10,7 +10,8 @@ fn tiny_flush_options() -> LsmOptions {
     LsmOptions {
         memtable_flush_bytes: 64, // forces a flush after just a couple of small commits
         compaction_trigger_files: 1000, // effectively disabled; compaction triggered manually
-        sparse_index_interval: 2,
+        block_size_bytes: 64,
+        compression: true,
     }
 }
 
@@ -71,7 +72,8 @@ fn force_compact_keeps_unflushed_commits_across_reopen() {
     let options = LsmOptions {
         memtable_flush_bytes: 512,
         compaction_trigger_files: 1000,
-        sparse_index_interval: 2,
+        block_size_bytes: 64,
+        compression: true,
     };
     {
         let backend = LsmStorageBackend::open_with_options(&path, options.clone()).unwrap();

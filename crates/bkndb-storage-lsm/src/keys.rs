@@ -34,6 +34,7 @@ pub fn table_prefix(table: TableSpec) -> Vec<u8> {
 /// user-key bytes. Panics if `key` doesn't actually start with `table`'s
 /// prefix — a programming error (this module's own encoding invariant),
 /// not a data-dependent failure.
+#[cfg(test)]
 pub fn strip_table_prefix(table: TableSpec, key: &[u8]) -> Vec<u8> {
     let prefix = table_prefix(table);
     assert!(

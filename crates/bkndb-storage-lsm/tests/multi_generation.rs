@@ -9,7 +9,8 @@ fn reads_merge_correctly_across_several_sstable_generations() {
     let options = LsmOptions {
         memtable_flush_bytes: 32,
         compaction_trigger_files: 1_000_000, // disabled: this test wants distinct on-disk generations, not one merged file
-        sparse_index_interval: 2,
+        block_size_bytes: 64,
+        compression: true,
     };
     let backend = LsmStorageBackend::open_with_options(dir.path().join("test.bkndb"), options).unwrap();
 

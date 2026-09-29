@@ -14,6 +14,9 @@ use crate::db::Db;
 pub struct SyncBatch {
     pub nodes: Vec<(String, Properties)>,
     pub edges: Vec<(NodeId, String, NodeId, Properties)>,
+    /// Edges whose endpoints may be nodes created by this same batch (see
+    /// [`NodeRef`]). Created after `edges`.
+    pub linked_edges: Vec<(NodeRef, String, NodeRef, Properties)>,
     pub relational_rows: Vec<(TableSchema, Vec<Properties>)>,
     pub relational_rows_with_pk: Vec<(TableSchema, Vec<(PropValue, Properties)>)>,
 }
@@ -27,6 +30,31 @@ fn push_grouped<T>(groups: &mut Vec<(TableSchema, Vec<T>)>, schema: TableSchema,
     match groups.last_mut() {
         Some((s, existing)) if *s == schema => existing.extend(items),
         _ => groups.push((schema, items)),
+    }
+}
+
+/// An edge endpoint in a [`SyncBatch`]: an existing node, or the node at
+/// `index` in this batch's `nodes` (whose id isn't known until it runs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRef {
+    Existing(NodeId),
+    New(usize),
+}
+
+impl From<NodeId> for NodeRef {
+    fn from(id: NodeId) -> Self {
+        NodeRef::Existing(id)
+    }
+}
+
+impl NodeRef {
+    fn resolve(self, created: &[NodeId]) -> Result<NodeId, BknError> {
+        match self {
+            NodeRef::Existing(id) => Ok(id),
+            NodeRef::New(i) => created.get(i).copied().ok_or_else(|| {
+                BknError::Encoding(format!("NodeRef::New({i}) is out of range: the batch creates {} node(s)", created.len()))
+            }),
+        }
     }
 }
 
@@ -65,6 +93,19 @@ impl SyncBatch {
         properties: Properties,
     ) -> &mut Self {
         self.edges.push((from, edge_type.into(), to, properties));
+        self
+    }
+
+    /// Adds an edge whose endpoints may be nodes added to this same batch:
+    /// `NodeRef::New(i)` is the `i`-th node added (0-based).
+    pub fn add_linked_edge(
+        &mut self,
+        from: impl Into<NodeRef>,
+        edge_type: impl Into<String>,
+        to: impl Into<NodeRef>,
+        properties: Properties,
+    ) -> &mut Self {
+        self.linked_edges.push((from.into(), edge_type.into(), to.into(), properties));
         self
     }
 
@@ -115,7 +156,11 @@ impl<B: StorageBackend> Db<B> {
         self.write_tx(|wbatch| {
             let mut graph = wbatch.graph();
             let node_ids = graph.create_nodes_bulk(batch.nodes)?;
-            let edge_ids = graph.create_edges_bulk(batch.edges)?;
+            let mut edges = batch.edges;
+            for (from, edge_type, to, props) in batch.linked_edges {
+                edges.push((from.resolve(&node_ids)?, edge_type, to.resolve(&node_ids)?, props));
+            }
+            let edge_ids = graph.create_edges_bulk(edges)?;
             drop(graph);
 
             let mut relational = wbatch.relational();

@@ -1,9 +1,11 @@
-mod catalog;
+pub(crate) mod catalog;
 mod codec;
 pub(crate) mod db;
-mod expr;
+pub(crate) mod expr;
 pub(crate) mod query;
 mod schema;
+#[cfg(feature = "search")]
+pub mod search;
 pub mod txn;
 
 pub use db::{RelTable, RelationalDb, Row};
@@ -13,3 +15,5 @@ pub use schema::{
     ColumnDef, ColumnKind, ColumnSchema, HasPrimaryKey, RelSchema, TableSchema, TableSchemaBuilder, MAX_IDENTIFIER_LEN,
 };
 pub use txn::{BatchTable, ReadTable, RelBatchView, RelReadView, RelWriteBatch};
+#[cfg(feature = "search")]
+pub use search::{pack_vector, tokenize, vector_of, ScoredRow, VectorMetric};

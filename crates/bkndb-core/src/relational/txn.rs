@@ -234,6 +234,61 @@ impl<'s, W: StorageWriteTx> RelBatchView<'s, W> {
     pub fn list_tables(&self) -> Result<Vec<TableSchema>, BknError> {
         catalog::list_schemas_in(&*self.wtx)
     }
+
+    /// See [`crate::relational::RelationalDb::create_fulltext_index`].
+    #[cfg(feature = "search")]
+    pub fn create_fulltext_index(&mut self, table: &str, column: &str) -> Result<bool, BknError> {
+        crate::relational::search::create_fulltext_index_in(self.wtx, table, column)
+    }
+
+    /// See [`crate::relational::RelationalDb::drop_fulltext_index`].
+    #[cfg(feature = "search")]
+    pub fn drop_fulltext_index(&mut self, table: &str, column: &str) -> Result<bool, BknError> {
+        crate::relational::search::drop_fulltext_index_in(self.wtx, table, column)
+    }
+
+    /// See [`crate::relational::RelationalDb::fulltext_indexes`].
+    #[cfg(feature = "search")]
+    pub fn fulltext_indexes(&self, table: &str) -> Result<Vec<String>, BknError> {
+        crate::relational::search::fulltext_columns_in(&*self.wtx, table)
+    }
+
+    /// See [`crate::relational::RelationalDb::search_text`] (sees this
+    /// transaction's writes).
+    #[cfg(feature = "search")]
+    pub fn search_text(
+        &self,
+        table: &str,
+        column: &str,
+        query: &str,
+        limit: usize,
+        match_all: bool,
+        filter: Option<&crate::relational::Expr>,
+    ) -> Result<Vec<crate::relational::ScoredRow>, BknError> {
+        let schema = catalog::require_schema_in(&*self.wtx, table)?;
+        crate::relational::search::search_text_in(&*self.wtx, &schema, column, query, limit, match_all, filter)
+    }
+
+    /// See [`crate::relational::RelationalDb::search_vector`].
+    #[cfg(feature = "search")]
+    pub fn search_vector(
+        &self,
+        table: &str,
+        column: &str,
+        query: &[f32],
+        limit: usize,
+        metric: crate::relational::VectorMetric,
+        filter: Option<&crate::relational::Expr>,
+    ) -> Result<Vec<crate::relational::ScoredRow>, BknError> {
+        let schema = catalog::require_schema_in(&*self.wtx, table)?;
+        crate::relational::search::search_vector_in(&*self.wtx, &schema, column, query, limit, metric, filter)
+    }
+
+    /// Runs one SQL statement inside this transaction (reads see its
+    /// pending writes). See [`crate::lang::sql`].
+    pub fn sql(&mut self, sql: &str, params: impl Into<crate::lang::Params>) -> Result<crate::lang::sql::SqlOutput, BknError> {
+        crate::lang::sql::execute(self.wtx, &crate::lang::sql::parse(sql)?, &params.into())
+    }
 }
 
 /// A read-only view of a relational table over an open [`StorageReadTx`].
@@ -318,5 +373,46 @@ impl<'s, R: StorageReadTx> RelReadView<'s, R> {
 
     pub fn list_tables(&self) -> Result<Vec<TableSchema>, BknError> {
         catalog::list_schemas_in(self.rtx)
+    }
+
+    /// See [`crate::relational::RelationalDb::fulltext_indexes`].
+    #[cfg(feature = "search")]
+    pub fn fulltext_indexes(&self, table: &str) -> Result<Vec<String>, BknError> {
+        crate::relational::search::fulltext_columns_in(self.rtx, table)
+    }
+
+    /// See [`crate::relational::RelationalDb::search_text`].
+    #[cfg(feature = "search")]
+    pub fn search_text(
+        &self,
+        table: &str,
+        column: &str,
+        query: &str,
+        limit: usize,
+        match_all: bool,
+        filter: Option<&crate::relational::Expr>,
+    ) -> Result<Vec<crate::relational::ScoredRow>, BknError> {
+        let schema = catalog::require_schema_in(self.rtx, table)?;
+        crate::relational::search::search_text_in(self.rtx, &schema, column, query, limit, match_all, filter)
+    }
+
+    /// See [`crate::relational::RelationalDb::search_vector`].
+    #[cfg(feature = "search")]
+    pub fn search_vector(
+        &self,
+        table: &str,
+        column: &str,
+        query: &[f32],
+        limit: usize,
+        metric: crate::relational::VectorMetric,
+        filter: Option<&crate::relational::Expr>,
+    ) -> Result<Vec<crate::relational::ScoredRow>, BknError> {
+        let schema = catalog::require_schema_in(self.rtx, table)?;
+        crate::relational::search::search_vector_in(self.rtx, &schema, column, query, limit, metric, filter)
+    }
+
+    /// Runs one read-only SQL statement (a `SELECT`) against this snapshot.
+    pub fn sql(&self, sql: &str, params: impl Into<crate::lang::Params>) -> Result<crate::lang::sql::SqlOutput, BknError> {
+        crate::lang::sql::execute_read(self.rtx, &crate::lang::sql::parse(sql)?, &params.into())
     }
 }

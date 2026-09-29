@@ -62,7 +62,12 @@ pub(crate) fn ensure_table_in<W: StorageWriteTx>(wtx: &mut W, schema: &TableSche
     match load_schema_in(wtx, schema.name())? {
         None => adopt_in(wtx, schema),
         Some(old) if old == *schema => Ok(()),
-        Some(old) => migrate_in(wtx, &old, schema),
+        Some(old) => {
+            migrate_in(wtx, &old, schema)?;
+            #[cfg(feature = "search")]
+            crate::relational::search::retain_valid_in(wtx, schema.name(), Some(schema))?;
+            Ok(())
+        }
     }
 }
 
@@ -79,6 +84,8 @@ pub(crate) fn drop_table_in<W: StorageWriteTx>(wtx: &mut W, name: &str) -> Resul
     }
     wtx.delete(meta_table(), &row_counter_key(name))?;
     wtx.delete(meta_table(), &catalog_key(name))?;
+    #[cfg(feature = "search")]
+    crate::relational::search::retain_valid_in(wtx, name, None)?;
     Ok(true)
 }
 

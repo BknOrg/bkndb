@@ -10,7 +10,8 @@
 
 use crate::BknError;
 
-pub const RESERVED_TABLE_NAMES: &[&str] = &["nodes", "edges", "adj_out", "adj_in", "meta"];
+pub const RESERVED_TABLE_NAMES: &[&str] =
+    &["nodes", "edges", "adj_out", "adj_in", "meta", "node_labels", "node_props"];
 
 pub fn is_reserved(name: &str) -> bool {
     RESERVED_TABLE_NAMES.contains(&name)
@@ -29,7 +30,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_five_reserved_names_are_flagged() {
+    fn every_reserved_name_is_flagged() {
         for &name in RESERVED_TABLE_NAMES {
             assert!(is_reserved(name));
             assert!(matches!(check_table_name(name), Err(BknError::ReservedTableName(_))));

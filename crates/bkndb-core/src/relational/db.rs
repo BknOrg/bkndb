@@ -139,6 +139,23 @@ impl<B: StorageBackend> RelationalDb<B> {
         catalog::load_schema_in(&self.backend.begin_read()?, name)
     }
 
+    /// Runs one SQL statement (see [`crate::lang::sql`] for the supported
+    /// subset): a query in a read snapshot, anything else in its own atomic
+    /// write transaction.
+    ///
+    /// ```ignore
+    /// db.sql("SELECT name FROM users WHERE age >= ? ORDER BY name", vec![18.into()])?;
+    /// ```
+    pub fn sql(&self, sql: &str, params: impl Into<crate::lang::Params>) -> Result<crate::lang::sql::SqlOutput, BknError> {
+        let stmt = crate::lang::sql::parse(sql)?;
+        let params = params.into();
+        if stmt.is_read_only() {
+            crate::lang::sql::execute_read(&self.backend.begin_read()?, &stmt, &params)
+        } else {
+            self.write(|wtx| crate::lang::sql::execute(wtx, &stmt, &params))
+        }
+    }
+
     /// Every table registered in the catalog, sorted by name.
     pub fn list_tables(&self) -> Result<Vec<TableSchema>, BknError> {
         catalog::list_schemas_in(&self.backend.begin_read()?)
@@ -206,6 +223,7 @@ impl TableRef {
 }
 
 /// Resolves an explicitly supplied schema against the catalog (see [`TableRef`]).
+#[cfg_attr(not(feature = "graph"), allow(dead_code))]
 pub(crate) fn resolve_schema<R: StorageReadTx>(
     rtx: &R,
     schema: TableSchema,
@@ -503,6 +521,8 @@ pub(crate) fn write_row_in<W: StorageWriteTx>(
             wtx.put(index_table(schema, col), &index_key(v, pk)?, &[])?;
         }
     }
+    #[cfg(feature = "search")]
+    crate::relational::search::on_row_change(wtx, schema, pk, old.as_ref().map(|r| &r.values), Some(&row.values))?;
     Ok(())
 }
 
@@ -513,10 +533,12 @@ fn explicit_pk(schema: &TableSchema, values: &Properties) -> Option<PropValue> {
         .cloned()
 }
 
-/// Whether an insert of `values` gets a freshly allocated pk.
-fn allocates_pk(schema: &TableSchema, values: &Properties, on_conflict: OnConflict) -> bool {
-    schema.auto_increment_pk()
-        && !(on_conflict == OnConflict::Replace && explicit_pk(schema, values).is_some())
+/// Whether an insert of `values` gets a freshly allocated pk: only on an
+/// auto-increment table, and only when the row doesn't name one itself. An
+/// explicit pk is always honored (as in SQL), bumping the counter past it,
+/// and — for a plain insert — fails with `DuplicateKey` if it's taken.
+fn allocates_pk(schema: &TableSchema, values: &Properties) -> bool {
+    schema.auto_increment_pk() && explicit_pk(schema, values).is_none()
 }
 
 pub(crate) fn insert_in<W: StorageWriteTx>(
@@ -537,7 +559,7 @@ pub(crate) fn insert_bulk_in<W: StorageWriteTx>(
     let items: Vec<Properties> = rows.into_iter().collect();
     let to_allocate = items
         .iter()
-        .filter(|v| allocates_pk(schema, v, on_conflict))
+        .filter(|v| allocates_pk(schema, v))
         .count();
     let mut next = if to_allocate > 0 {
         reserve_pks(wtx, schema, to_allocate as u64)?
@@ -547,7 +569,7 @@ pub(crate) fn insert_bulk_in<W: StorageWriteTx>(
 
     let mut pks = Vec::with_capacity(items.len());
     for values in items {
-        let pk = if allocates_pk(schema, &values, on_conflict) {
+        let pk = if allocates_pk(schema, &values) {
             next += 1;
             PropValue::Int(next - 1)
         } else {
@@ -728,6 +750,8 @@ pub(crate) fn delete_row_in<W: StorageWriteTx>(
             wtx.delete(index_table(schema, col), &index_key(v, pk)?)?;
         }
     }
+    #[cfg(feature = "search")]
+    crate::relational::search::on_row_change(wtx, schema, pk, Some(&row.values), None)?;
     Ok(true)
 }
 
@@ -770,5 +794,7 @@ pub(crate) fn update_row_in<W: StorageWriteTx>(
         &sortable_encode(pk)?,
         &encode_row(&new_row.values)?,
     )?;
+    #[cfg(feature = "search")]
+    crate::relational::search::on_row_change(wtx, schema, pk, Some(&old_row.values), Some(&new_row.values))?;
     Ok(true)
 }

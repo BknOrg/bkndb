@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bkndb"
-version = "0.1.0"
+version = "0.2.0"
 description = "Embedded hybrid graph + relational database engine — single-file, in-process, ACID."
 readme = "README.md"
 license = "Apache-2.0"
@@ -25,8 +25,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/BknOrg/bkn-db"
-Repository = "https://github.com/BknOrg/bkn-db"
+Homepage = "https://github.com/BknOrg/bkndb"
+Repository = "https://github.com/BknOrg/bkndb"
 
 [project.optional-dependencies]
 pandas = ["pandas>=1.5"]

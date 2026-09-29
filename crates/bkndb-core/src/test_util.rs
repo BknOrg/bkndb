@@ -50,6 +50,51 @@ pub fn conformance_suite<B: StorageBackend>(backend: &B) {
             (vec![4], vec![40])
         ]
     );
+
+    // 5. streaming scan yields exactly what range returns, can stop early,
+    //    and bounds that can't contain anything are empty (never a panic)
+    let all = r3.range(T, Bound::Unbounded, Bound::Unbounded).unwrap();
+    let streamed: Vec<_> = r3.scan(T, Bound::Unbounded, Bound::Unbounded).unwrap().map(Result::unwrap).collect();
+    assert_eq!(streamed, all);
+    let first_two: Vec<_> = r3.scan(T, Bound::Excluded(&[1u8][..]), Bound::Unbounded).unwrap().take(2).map(Result::unwrap).collect();
+    assert_eq!(first_two, vec![(vec![2], vec![20]), (vec![3], vec![30])]);
+    for (lo, hi) in [
+        (Bound::Included(&[4u8][..]), Bound::Included(&[2u8][..])),
+        (Bound::Excluded(&[3u8][..]), Bound::Excluded(&[3u8][..])),
+        (Bound::Included(&[3u8][..]), Bound::Excluded(&[3u8][..])),
+    ] {
+        assert!(r3.range(T, lo, hi).unwrap().is_empty());
+        assert_eq!(r3.scan(T, lo, hi).unwrap().count(), 0);
+    }
+    assert!(r3.scan(TableSpec("never_written"), Bound::Unbounded, Bound::Unbounded).unwrap().next().is_none());
+
+    // 6. a write transaction's scan sees its own uncommitted puts/deletes
+    {
+        let mut w = backend.begin_write().unwrap();
+        w.delete(T, &[2u8]).unwrap();
+        w.put(T, &[6u8], &[60]).unwrap();
+        let keys: Vec<u8> = w.scan(T, Bound::Unbounded, Bound::Unbounded).unwrap().map(|kv| kv.unwrap().0[0]).collect();
+        assert_eq!(keys, vec![1, 3, 4, 5, 6]);
+        let (lo, hi) = (Bound::Included(&[5u8][..]), Bound::Included(&[1u8][..]));
+        assert!(w.range(T, lo, hi).unwrap().is_empty());
+        assert_eq!(w.scan(T, lo, hi).unwrap().count(), 0);
+        // dropped without commit: rolled back
+    }
+
+    // 7. a read transaction keeps seeing its snapshot while a writer commits
+    let before = backend.begin_read().unwrap();
+    {
+        let mut w = backend.begin_write().unwrap();
+        w.put(T, &[9u8], &[90]).unwrap();
+        w.delete(T, &[1u8]).unwrap();
+        w.commit().unwrap();
+    }
+    assert_eq!(before.get(T, &[1u8]).unwrap(), Some(vec![10]));
+    assert_eq!(before.get(T, &[9u8]).unwrap(), None);
+    assert_eq!(before.scan(T, Bound::Unbounded, Bound::Unbounded).unwrap().count(), 5);
+    let after = backend.begin_read().unwrap();
+    assert_eq!(after.scan(T, Bound::Unbounded, Bound::Unbounded).unwrap().count(), 5);
+    assert_eq!(after.get(T, &[9u8]).unwrap(), Some(vec![90]));
 }
 
 /// Shared conformance suite for the graph layer (M2 CRUD, M3 cascade
@@ -1626,6 +1671,23 @@ pub fn relational_integrity_suite<B: StorageBackend>(backend: B) {
     })
     .unwrap();
 
+    // On an auto-increment table an explicit pk is honored (and bumps the
+    // counter past it); a taken one is a duplicate, not silently renumbered.
+    static COUNTERS: RelSchema = RelSchema {
+        name: "counters",
+        auto_increment_pk: true,
+        indexed_columns: &[],
+        ..PEOPLE
+    };
+    let c = db.table(&COUNTERS);
+    assert_eq!(c.insert(row("a", 1)).unwrap(), PropValue::Int(1));
+    let mut explicit = row("b", 2);
+    explicit.insert("id".to_string(), PropValue::Int(10));
+    assert_eq!(c.insert(explicit.clone()).unwrap(), PropValue::Int(10));
+    assert_eq!(c.insert(row("c", 3)).unwrap(), PropValue::Int(11));
+    assert!(matches!(c.insert(explicit), Err(BknError::DuplicateKey { .. })));
+    assert_eq!(c.get(&PropValue::Int(10)).unwrap().unwrap().values, row("b", 2));
+
     // Column-kind validation.
     let mut wrong_kind = row("Surabaya", 0);
     wrong_kind.insert("age".to_string(), PropValue::Str("old".into()));
@@ -1859,6 +1921,10 @@ pub fn relational_query_suite<B: StorageBackend>(backend: B) {
     assert_eq!(ids(t.select().where_prefix("cat", "fr").order_by_asc("id").run().unwrap()), vec![1, 2, 6]);
     // Range on an unindexed column works too (scan), comparing Float to Int.
     assert_eq!(ids(t.select().filter(col("weight").lt(1)).order_by_asc("id").run().unwrap()), vec![1, 6]);
+    // Contradictory ranges (on the pk and on an index) are simply empty.
+    assert!(t.select().filter(col("id").gt(4).and(col("id").lt(2))).run().unwrap().is_empty());
+    assert!(t.select().filter(col("id").gt(3).and(col("id").lt(3))).run().unwrap().is_empty());
+    assert_eq!(t.select().filter(col("price").ge(40).and(col("price").le(10))).count().unwrap(), 0);
 
     // Boolean logic and null handling.
     let q = col("cat").eq("fruit").and(col("price").ge(20)).or(col("cat").eq("meat"));
@@ -1875,6 +1941,12 @@ pub fn relational_query_suite<B: StorageBackend>(backend: B) {
     assert!(t.select().order_by_desc("price").offset(10).run().unwrap().is_empty());
     assert_eq!(t.select().limit(3).run().unwrap().len(), 3);
     assert_eq!(ids(t.select().offset(4).run().unwrap()), vec![5, 6]);
+    // ORDER BY pk over pk-ordered access paths (streamed, no sort) and over
+    // an index path (sorted) agree.
+    assert_eq!(ids(t.select().order_by_asc("id").offset(1).limit(2).run().unwrap()), vec![2, 3]);
+    assert_eq!(ids(t.select().filter(col("id").gt(2)).order_by_asc("id").limit(2).run().unwrap()), vec![3, 4]);
+    assert_eq!(ids(t.select().where_eq("cat", "fruit").order_by_asc("id").run().unwrap()), vec![1, 2, 6]);
+    assert_eq!(ids(t.select().filter(col("weight").ge(1)).order_by_desc("id").limit(2).run().unwrap()), vec![5, 4]);
     let projected = t.select().where_eq("id", 1).columns(["price"]).run().unwrap();
     assert_eq!(projected[0].values.keys().collect::<Vec<_>>(), vec!["price"]);
     assert_eq!(projected[0].pk, PropValue::Int(1));
@@ -2021,4 +2093,732 @@ pub fn hybrid_query_suite<B: StorageBackend>(backend: B) {
         Ok(())
     })
     .unwrap();
+}
+
+/// Label and property indexes: lookups, maintenance on every node write,
+/// and the fallback + rebuild path for files created before the indexes
+/// existed.
+pub fn graph_index_suite<B: StorageBackend>(backend: B) {
+    use std::sync::Arc;
+
+    use crate::graph::{Direction, GraphDb};
+    use crate::value::{PropValue, Properties};
+
+    fn props(pairs: &[(&str, PropValue)]) -> Properties {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
+    let backend = Arc::new(backend);
+    let g = GraphDb::from_arc(backend.clone());
+    let alice = g.create_node("Person", props(&[("name", "alice".into()), ("age", 30.into())])).unwrap();
+    let bob = g.create_node("Person", props(&[("name", "bob".into()), ("age", 30.into())])).unwrap();
+    let bulk = g
+        .create_nodes_bulk([
+            ("Person", props(&[("name", "carol".into()), ("age", 41.into())])),
+            ("City", props(&[("name", "Jakarta".into())])),
+        ])
+        .unwrap();
+    let (carol, jakarta) = (bulk[0], bulk[1]);
+    g.create_edge(alice, "LIVES_IN", jakarta, Properties::new()).unwrap();
+    g.create_edge(bob, "LIVES_IN", jakarta, Properties::new()).unwrap();
+
+    assert_eq!(g.nodes_by_label("Person").unwrap(), vec![alice, bob, carol]);
+    assert_eq!(g.nodes_by_label("City").unwrap(), vec![jakarta]);
+    assert!(g.nodes_by_label("Pers").unwrap().is_empty(), "labels match exactly, not by prefix");
+
+    // Without a property index: label scan + filter.
+    assert_eq!(g.find_nodes("Person", "age", &30.into()).unwrap(), vec![alice, bob]);
+    assert!(g.find_nodes("City", "age", &30.into()).unwrap().is_empty());
+
+    // With one: backfilled on creation, then maintained by writes.
+    assert!(g.create_property_index("Person", "age").unwrap());
+    assert!(!g.create_property_index("Person", "age").unwrap());
+    assert_eq!(g.property_indexes().unwrap(), vec![("Person".to_string(), "age".to_string())]);
+    assert_eq!(g.find_nodes("Person", "age", &30.into()).unwrap(), vec![alice, bob]);
+    g.update_node_properties(bob, |p| {
+        p.insert("age".into(), 31.into());
+    })
+    .unwrap();
+    assert_eq!(g.find_nodes("Person", "age", &30.into()).unwrap(), vec![alice]);
+    assert_eq!(g.find_nodes("Person", "age", &31.into()).unwrap(), vec![bob]);
+    let dave = g.create_node("Person", props(&[("age", 30.into())])).unwrap();
+    assert_eq!(g.find_nodes("Person", "age", &30.into()).unwrap(), vec![alice, dave]);
+    g.delete_node(alice).unwrap();
+    assert_eq!(g.find_nodes("Person", "age", &30.into()).unwrap(), vec![dave]);
+    assert_eq!(g.nodes_by_label("Person").unwrap(), vec![bob, carol, dave]);
+    // Values the index can't hold still work (scan fallback).
+    let eve = g.create_node("Person", props(&[("age", PropValue::Float(30.5))])).unwrap();
+    assert_eq!(g.find_nodes("Person", "age", &PropValue::Float(30.5)).unwrap(), vec![eve]);
+
+    // Batch writes maintain the indexes too, and see their own writes.
+    g.write_tx(|tx| {
+        let mut b = tx.graph();
+        let frank = b.create_node("Person", props(&[("age", 30.into())]))?;
+        assert_eq!(b.find_nodes("Person", "age", &30.into())?, vec![dave, frank]);
+        b.delete_node(dave)?;
+        assert_eq!(b.find_nodes("Person", "age", &30.into())?, vec![frank]);
+        Ok(())
+    })
+    .unwrap();
+
+    // top_hubs restricted to a label.
+    let hubs = g.top_hubs(5, Direction::In, Some("City")).unwrap();
+    assert_eq!(hubs, vec![(jakarta, 1)], "alice's edge went with her");
+
+    assert!(g.drop_property_index("Person", "age").unwrap());
+    assert!(g.property_indexes().unwrap().is_empty());
+    assert_eq!(g.find_nodes("Person", "age", &31.into()).unwrap(), vec![bob]);
+
+    // Simulate a file from before the label index existed: no marker and
+    // no entries. Lookups must stay correct (full scan), and a rebuild
+    // restores the index.
+    {
+        let mut w = backend.begin_write().unwrap();
+        w.delete(TableSpec("meta"), b"graph:label_index").unwrap();
+        for (k, _) in w.range(TableSpec("node_labels"), Bound::Unbounded, Bound::Unbounded).unwrap() {
+            w.delete(TableSpec("node_labels"), &k).unwrap();
+        }
+        w.commit().unwrap();
+    }
+    let people = g.nodes_by_label("Person").unwrap();
+    assert!(people.contains(&bob) && people.contains(&carol) && !people.contains(&alice));
+    g.rebuild_indexes().unwrap();
+    assert_eq!(g.nodes_by_label("Person").unwrap(), people);
+    let r = backend.begin_read().unwrap();
+    assert!(!r.range(TableSpec("node_labels"), Bound::Unbounded, Bound::Unbounded).unwrap().is_empty());
+}
+
+/// Dijkstra over edge weights.
+pub fn graph_weighted_path_suite<B: StorageBackend>(backend: B) {
+    use crate::graph::{Direction, GraphDb};
+    use crate::value::{PropValue, Properties};
+
+    fn w(v: PropValue) -> Properties {
+        [("cost".to_string(), v)].into_iter().collect()
+    }
+
+    let g = GraphDb::new(backend);
+    let [a, b, c, d] = ["a", "b", "c", "d"].map(|n| g.create_node(n, Properties::new()).unwrap());
+    let ab = g.create_edge(a, "ROAD", b, w(1.into())).unwrap();
+    let bc = g.create_edge(b, "ROAD", c, w(PropValue::Float(1.5))).unwrap();
+    g.create_edge(a, "ROAD", c, w(5.into())).unwrap();
+    g.create_edge(c, "FERRY", d, Properties::new()).unwrap(); // no weight: default
+
+    // BFS picks the direct edge; Dijkstra the cheaper detour.
+    assert_eq!(g.find_shortest_path(a, c, Direction::Out, None).unwrap().unwrap().nodes(), vec![a, c]);
+    let best = g.find_weighted_path(a, c, Direction::Out, None, "cost", 1.0).unwrap().unwrap();
+    assert_eq!(best.path.nodes(), vec![a, b, c]);
+    assert_eq!(best.path.edges(), vec![ab, bc]);
+    assert_eq!(best.cost, 2.5);
+
+    let to_d = g.find_weighted_path(a, d, Direction::Out, None, "cost", 10.0).unwrap().unwrap();
+    assert_eq!(to_d.cost, 12.5);
+    assert!(g.find_weighted_path(a, d, Direction::Out, Some(&["ROAD"]), "cost", 1.0).unwrap().is_none());
+    assert!(g.find_weighted_path(d, a, Direction::Out, None, "cost", 1.0).unwrap().is_none());
+    assert_eq!(g.find_weighted_path(d, a, Direction::Both, None, "cost", 1.0).unwrap().unwrap().cost, 3.5);
+    assert_eq!(g.find_weighted_path(a, a, Direction::Out, None, "cost", 1.0).unwrap().unwrap().cost, 0.0);
+
+    let e = g.create_node("e", Properties::new()).unwrap();
+    g.create_edge(d, "ROAD", e, w((-1).into())).unwrap();
+    assert!(g.find_weighted_path(a, e, Direction::Out, None, "cost", 1.0).is_err(), "negative weights are rejected");
+    assert!(g.find_weighted_path(a, c, Direction::Out, None, "cost", -1.0).is_err());
+}
+
+/// Sync batches whose edges refer to nodes created in the same batch.
+pub fn sync_batch_linked_edges_suite<B: StorageBackend>(backend: B) {
+    use crate::db::{Db, NodeRef, SyncBatch};
+    use crate::value::Properties;
+
+    let db = Db::new(backend);
+    let existing = db.graph().create_node("Repo", Properties::new()).unwrap();
+
+    let mut batch = SyncBatch::new();
+    batch
+        .add_node("File", Properties::new())
+        .add_node("Function", Properties::new())
+        .add_linked_edge(NodeRef::New(0), "DEFINES", NodeRef::New(1), Properties::new())
+        .add_linked_edge(existing, "CONTAINS", NodeRef::New(0), Properties::new());
+    let res = db.sync_batch(batch).unwrap();
+    let (file, func) = (res.node_ids[0], res.node_ids[1]);
+    assert_eq!(res.edge_ids.len(), 2);
+    let g = db.graph();
+    assert_eq!(g.neighbors_out(file, "DEFINES").unwrap()[0].0, func);
+    assert_eq!(g.neighbors_out(existing, "CONTAINS").unwrap()[0].0, file);
+
+    // A bad reference fails the whole batch atomically.
+    let before = g.nodes_by_label("File").unwrap();
+    let mut bad = SyncBatch::new();
+    bad.add_node("File", Properties::new())
+        .add_linked_edge(NodeRef::New(0), "X", NodeRef::New(5), Properties::new());
+    assert!(db.sync_batch(bad).is_err());
+    assert_eq!(g.nodes_by_label("File").unwrap(), before);
+}
+
+/// `Db::stats`: logical counts from one snapshot.
+#[cfg(all(feature = "graph", feature = "relational"))]
+pub fn db_stats_suite<B: StorageBackend>(backend: B) {
+    use crate::graph::Properties;
+    use crate::relational::{ColumnKind, ColumnSchema, TableSchema};
+    use crate::{Db, DbStats};
+
+    let db = Db::new(backend);
+    assert_eq!(db.stats().unwrap(), DbStats::default());
+
+    let graph = db.graph();
+    let a = graph.create_node("P", Properties::new()).unwrap();
+    let b = graph.create_node("P", Properties::new()).unwrap();
+    let c = graph.create_node("Q", Properties::new()).unwrap();
+    graph.create_edge(a, "knows", b, Properties::new()).unwrap();
+    graph.create_edge(b, "knows", c, Properties::new()).unwrap();
+
+    let rel = db.relational();
+    for name in ["zeta", "alpha"] {
+        let schema = TableSchema::builder(name)
+            .column(ColumnSchema::new("id", ColumnKind::Int))
+            .column(ColumnSchema::new("v", ColumnKind::Str))
+            .primary_key("id")
+            .auto_increment()
+            .index("v")
+            .build()
+            .unwrap();
+        rel.create_table(&schema).unwrap();
+    }
+    let alpha = rel.table_named("alpha").unwrap();
+    for v in ["x", "y", "z"] {
+        let mut p = Properties::new();
+        p.insert("v".into(), v.into());
+        alpha.insert(p).unwrap();
+    }
+
+    let stats = db.stats().unwrap();
+    assert_eq!((stats.nodes, stats.edges), (3, 2));
+    assert_eq!(stats.tables, vec![("alpha".to_string(), 3), ("zeta".to_string(), 0)]);
+
+    graph.delete_node(c).unwrap(); // cascades its edge
+    let stats = db.stats().unwrap();
+    assert_eq!((stats.nodes, stats.edges), (2, 1));
+}
+
+/// Timestamp / Uuid / List / Map values: storage, keys, indexes, filters on
+/// nested paths, and graph property lookups that mustn't confuse kinds.
+#[cfg(all(feature = "graph", feature = "relational"))]
+pub fn value_types_suite<B: StorageBackend>(backend: B) {
+    use std::collections::BTreeMap;
+
+    use crate::graph::Properties as GraphProps;
+    use crate::relational::{col, ColumnKind, ColumnSchema, TableSchema};
+    use crate::value::{PropValue, Properties};
+    use crate::{BknError, Db};
+
+    let db = Db::new(backend);
+    let rel = db.relational();
+    let events = TableSchema::builder("events")
+        .column(ColumnSchema::new("id", ColumnKind::Uuid))
+        .column(ColumnSchema::new("at", ColumnKind::Timestamp))
+        .column(ColumnSchema::new("tags", ColumnKind::List))
+        .column(ColumnSchema::new("meta", ColumnKind::Map))
+        .column(ColumnSchema::new("title", ColumnKind::Str))
+        .primary_key("id")
+        .index("at")
+        .build()
+        .unwrap();
+    rel.create_table(&events).unwrap();
+    let t = rel.table_named("events").unwrap();
+
+    let uuid = |n: u8| PropValue::Uuid([n; 16]);
+    let meta = |author: &str, score: i64| {
+        let mut m = BTreeMap::new();
+        m.insert("author".to_string(), PropValue::Str(author.into()));
+        m.insert("score".to_string(), PropValue::Int(score));
+        PropValue::Map(m)
+    };
+    let rows = [
+        (3u8, 3_000, vec!["rust", "db"], "ana", 7, "Graph Databases"),
+        (1, 1_000, vec!["python"], "budi", 9, "Intro to Python"),
+        (2, 2_000, vec!["rust"], "ana", 1, "rust tips"),
+    ];
+    for (id, at, tags, author, score, title) in rows {
+        let mut p = Properties::new();
+        p.insert("id".into(), uuid(id));
+        p.insert("at".into(), PropValue::Timestamp(at));
+        p.insert("tags".into(), PropValue::List(tags.into_iter().map(PropValue::from).collect()));
+        p.insert("meta".into(), meta(author, score));
+        p.insert("title".into(), title.into());
+        t.insert(p).unwrap();
+    }
+    let ids = |rows: Vec<crate::relational::Row>| -> Vec<PropValue> { rows.into_iter().map(|r| r.pk).collect() };
+
+    // Keys: pk get, pk order, timestamp index range.
+    assert_eq!(t.get(&uuid(2)).unwrap().unwrap().values["title"], "rust tips".into());
+    assert_eq!(ids(t.select().run().unwrap()), vec![uuid(1), uuid(2), uuid(3)]);
+    let recent = t.select().filter(col("at").ge(PropValue::Timestamp(2_000))).order_by_asc("at").run().unwrap();
+    assert_eq!(ids(recent), vec![uuid(2), uuid(3)]);
+    // Kinds don't mix: an Int never matches a Timestamp column.
+    assert_eq!(t.select().filter(col("at").ge(2_000)).count().unwrap(), 0);
+
+    // List / Map / Str predicates and nested paths.
+    assert_eq!(ids(t.select().filter(col("tags").contains("rust")).run().unwrap()), vec![uuid(2), uuid(3)]);
+    assert_eq!(ids(t.select().filter(col("meta").contains("author")).run().unwrap()).len(), 3);
+    assert_eq!(ids(t.select().filter(col("meta.author").eq("ana")).run().unwrap()), vec![uuid(2), uuid(3)]);
+    assert_eq!(ids(t.select().filter(col("tags.0").eq("python")).run().unwrap()), vec![uuid(1)]);
+    assert_eq!(ids(t.select().order_by_desc("meta.score").run().unwrap()), vec![uuid(1), uuid(3), uuid(2)]);
+    assert_eq!(ids(t.select().filter(col("title").like("%tips")).run().unwrap()), vec![uuid(2)]);
+    assert_eq!(ids(t.select().filter(col("title").ilike("graph%")).run().unwrap()), vec![uuid(3)]);
+    assert_eq!(ids(t.select().filter(col("title").like("_ntro%Py%")).run().unwrap()), vec![uuid(1)]);
+    assert_eq!(ids(t.select().filter(col("title").contains("to")).run().unwrap()), vec![uuid(1)]);
+    assert!(matches!(t.select().filter(col("nope.x").eq(1)).run(), Err(BknError::SchemaMismatch { .. })));
+
+    // Validation: kinds are enforced, and non-keyable kinds can't be indexed.
+    let mut wrong = Properties::new();
+    wrong.insert("id".into(), uuid(9));
+    wrong.insert("at".into(), PropValue::Int(5));
+    assert!(matches!(t.insert(wrong), Err(BknError::SchemaMismatch { .. })));
+    assert!(rel.create_index("events", "tags").is_err());
+
+    // Graph properties are untyped: an index lookup must not confuse
+    // Timestamp(5) with Int(5).
+    let g = db.graph();
+    let mut pa = GraphProps::new();
+    pa.insert("v".into(), PropValue::Int(5));
+    let a = g.create_node("E", pa).unwrap();
+    let mut pb = GraphProps::new();
+    pb.insert("v".into(), PropValue::Timestamp(5));
+    pb.insert("nested".into(), meta("x", 1));
+    let b = g.create_node("E", pb).unwrap();
+    g.create_property_index("E", "v").unwrap();
+    assert_eq!(g.find_nodes("E", "v", &PropValue::Int(5)).unwrap(), vec![a]);
+    assert_eq!(g.find_nodes("E", "v", &PropValue::Timestamp(5)).unwrap(), vec![b]);
+    assert_eq!(g.get_node(b).unwrap().unwrap().properties["nested"], meta("x", 1));
+}
+
+/// The SQL subset: DDL, DML, queries, parameters, aggregates, errors, and
+/// SQL inside an explicit transaction.
+#[cfg(all(feature = "graph", feature = "relational"))]
+pub fn sql_suite<B: StorageBackend>(backend: B) {
+    use crate::lang::Params;
+    use crate::relational::RelationalDb;
+    use crate::value::PropValue;
+    use crate::BknError;
+
+    let db = RelationalDb::new(backend);
+    let run = |sql: &str| db.sql(sql, ()).unwrap_or_else(|e| panic!("{sql}: {e}"));
+
+    run("CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            name VARCHAR(100),
+            age INT DEFAULT 0,
+            joined TIMESTAMP,
+            tags LIST,
+            meta JSON,
+            INDEX (age)
+        );");
+    let schema = db.table_schema("users").unwrap().unwrap();
+    assert!(schema.auto_increment_pk() && schema.is_indexed("age") && schema.is_indexed("email"));
+    assert!(matches!(db.sql("CREATE TABLE users (id INT PRIMARY KEY)", ()), Err(BknError::InvalidQuery(_))));
+    run("CREATE TABLE IF NOT EXISTS users (id INT PRIMARY KEY)");
+
+    let out = run("INSERT INTO users (email, name, age, joined, tags, meta) VALUES
+        ('ana@x.io', 'Ana', 30, TIMESTAMP '2026-01-15T08:00:00Z', ['admin', 'dev'], {team: 'core', level: 3}),
+        ('budi@x.io', 'Budi', 25, TIMESTAMP '2026-03-01', ['dev'], {team: 'web', level: 1}),
+        ('citra@x.io', 'Citra', 41, NULL, [], {team: 'core', level: 2})");
+    assert_eq!(out.affected, 3);
+    assert_eq!(out.columns, vec!["id"]);
+    assert_eq!(out.rows, vec![vec![1.into()], vec![2.into()], vec![3.into()]]);
+    let dup = db.sql("INSERT INTO users (email) VALUES ('ana@x.io')", ());
+    assert!(matches!(dup, Err(BknError::ConstraintViolation { .. })), "{dup:?}");
+
+    // Parameters: positional, numbered, named; every kind goes through.
+    let out = db
+        .sql(
+            "INSERT INTO users (email, name, age, joined) VALUES (?, ?, ?, :when)",
+            Params::positional([PropValue::from("dewi@x.io"), "Dewi".into(), PropValue::Int(19)]).with("when", PropValue::Timestamp(0)),
+        )
+        .unwrap();
+    assert_eq!(out.rows, vec![vec![4.into()]]);
+
+    let first_col = |sql: &str, params: Params| -> Vec<PropValue> {
+        db.sql(sql, params).unwrap_or_else(|e| panic!("{sql}: {e}")).rows.into_iter().map(|r| r[0].clone()).collect()
+    };
+    let strs = |v: &[&str]| v.iter().map(|s| PropValue::from(*s)).collect::<Vec<_>>();
+    let none = Params::none;
+    assert_eq!(
+        first_col("SELECT name FROM users WHERE age >= ? ORDER BY age DESC", Params::positional([25])),
+        strs(&["Citra", "Ana", "Budi"])
+    );
+    assert_eq!(first_col("SELECT name FROM users WHERE 25 < age ORDER BY name", none()), strs(&["Ana", "Citra"]));
+    assert_eq!(
+        first_col("SELECT name FROM users WHERE age BETWEEN $1 AND $2 ORDER BY id", Params::positional([19, 30])),
+        strs(&["Ana", "Budi", "Dewi"])
+    );
+    assert_eq!(
+        first_col("SELECT name FROM users WHERE name IN ('Ana', 'Dewi', 'Zed') ORDER BY id", none()),
+        strs(&["Ana", "Dewi"])
+    );
+    assert_eq!(
+        first_col("SELECT name FROM users WHERE name NOT IN ('Ana') AND NOT (age < 20) ORDER BY id", none()),
+        strs(&["Budi", "Citra"])
+    );
+    assert_eq!(first_col("SELECT name FROM users WHERE joined IS NULL", none()), strs(&["Citra"]));
+    assert_eq!(first_col("SELECT name FROM users WHERE email LIKE 'b%'", none()), strs(&["Budi"]));
+    assert_eq!(first_col("SELECT name FROM users WHERE name ILIKE '%I%' ORDER BY id", none()), strs(&["Budi", "Citra", "Dewi"]));
+    assert_eq!(first_col("SELECT name FROM users WHERE name NOT LIKE '%i%' ORDER BY id", none()), strs(&["Ana"]));
+    assert_eq!(first_col("SELECT name FROM users WHERE tags CONTAINS 'dev' ORDER BY id", none()), strs(&["Ana", "Budi"]));
+    assert_eq!(
+        first_col("SELECT name FROM users WHERE meta.team = 'core' ORDER BY meta.level DESC", none()),
+        strs(&["Ana", "Citra"])
+    );
+    assert_eq!(
+        first_col("SELECT name FROM users WHERE joined >= TIMESTAMP '2026-02-01' OR age = 41 ORDER BY id", none()),
+        strs(&["Budi", "Citra"])
+    );
+    assert_eq!(first_col("SELECT name FROM users ORDER BY id LIMIT 2 OFFSET 1", none()), strs(&["Budi", "Citra"]));
+    assert_eq!(first_col("SELECT name FROM users ORDER BY id LIMIT :n", Params::named([("n", 1)])), strs(&["Ana"]));
+
+    let star = run("SELECT * FROM users WHERE id = 2");
+    assert_eq!(star.columns, vec!["id", "email", "name", "age", "joined", "tags", "meta"]);
+    assert_eq!(star.rows[0][3], PropValue::Int(25));
+    let aliased = run("SELECT meta.team AS team, tags.0 first_tag FROM users WHERE id = 1");
+    assert_eq!(aliased.columns, vec!["team", "first_tag"]);
+    assert_eq!(aliased.rows, vec![vec![PropValue::from("core"), "admin".into()]]);
+
+    // Aggregates.
+    let agg = run("SELECT COUNT(*), SUM(age), MIN(age), MAX(age), AVG(age), COUNT(joined) FROM users");
+    assert_eq!(agg.columns, vec!["count(*)", "sum(age)", "min(age)", "max(age)", "avg(age)", "count(joined)"]);
+    assert_eq!(
+        agg.rows,
+        vec![vec![PropValue::Int(4), 115.into(), 19.into(), 41.into(), 28.75.into(), 3.into()]]
+    );
+    let grouped = run(
+        "SELECT meta.team AS team, COUNT(*) AS n FROM users WHERE meta IS NOT NULL GROUP BY meta.team ORDER BY n DESC, team",
+    );
+    assert_eq!(grouped.rows, vec![vec![PropValue::from("core"), 2.into()], vec!["web".into(), 1.into()]]);
+    assert!(matches!(db.sql("SELECT name, COUNT(*) FROM users", ()), Err(BknError::InvalidQuery(_))));
+
+    // Updates, upserts, deletes.
+    assert_eq!(run("UPDATE users SET age = 31, name = 'Ana S.' WHERE email = 'ana@x.io'").affected, 1);
+    assert_eq!(first_col("SELECT name FROM users WHERE id = 1", none()), strs(&["Ana S."]));
+    assert_eq!(run("INSERT OR REPLACE INTO users (id, email, name) VALUES (2, 'budi@x.io', 'Budi B.')").affected, 1);
+    assert_eq!(run("SELECT age FROM users WHERE id = 2").rows, vec![vec![PropValue::Int(0)]], "replace resets to defaults");
+    assert_eq!(run("UPSERT INTO users (id, email) VALUES (10, 'eka@x.io')").rows, vec![vec![PropValue::Int(10)]]);
+    assert_eq!(run("DELETE FROM users WHERE age < 20 AND id <> 2 OR id = 10").affected, 2);
+    assert_eq!(run("SELECT COUNT(*) FROM users").rows, vec![vec![PropValue::Int(3)]]);
+
+    // Schema changes.
+    run("ALTER TABLE users ADD COLUMN active BOOL DEFAULT TRUE");
+    assert_eq!(run("SELECT COUNT(*) FROM users WHERE active = TRUE").rows, vec![vec![PropValue::Int(3)]]);
+    run("ALTER TABLE users DROP COLUMN tags");
+    assert!(db.table_schema("users").unwrap().unwrap().column("tags").is_none());
+    run("CREATE INDEX idx_name ON users (name)");
+    assert!(db.table_schema("users").unwrap().unwrap().is_indexed("name"));
+    run("DROP INDEX ON users (name)");
+    run("DROP INDEX IF EXISTS ON users (name)");
+
+    // Errors carry positions / reasons.
+    for (sql, needle) in [
+        ("SELEC * FROM users", "expected SELECT"),
+        ("SELECT * FROM users WHERE", "expected a column name"),
+        ("SELECT * FROM users WHERE age >", "expected a value"),
+        ("SELECT * FROM users LIMIT -1", "non-negative"),
+        ("SELECT * FROM users WHERE age = ?", "parameter 1 is not bound"),
+        ("SELECT * FROM users extra junk", "unexpected input"),
+        ("SELECT * FROM users WHERE x = TIMESTAMP 'yesterday'", "invalid TIMESTAMP"),
+        ("INSERT INTO users (email, name) VALUES ('a')", "has 1 values for 2 columns"),
+    ] {
+        let err = db.sql(sql, ()).unwrap_err().to_string();
+        assert!(err.contains(needle), "{sql}: {err}");
+    }
+    assert!(matches!(db.sql("SELECT nope FROM users", ()), Err(BknError::SchemaMismatch { .. })));
+    assert!(matches!(db.sql("SELECT * FROM ghosts", ()), Err(BknError::TableNotFound(_))));
+
+    // Inside an explicit transaction: reads see pending writes; a failure
+    // rolls everything back.
+    let r: Result<(), BknError> = db.write_tx(|tx| {
+        let mut v = tx.view();
+        v.sql("INSERT INTO users (email) VALUES ('tx@x.io')", ())?;
+        assert_eq!(v.sql("SELECT COUNT(*) FROM users", ())?.rows, vec![vec![PropValue::Int(4)]]);
+        v.sql("INSERT INTO users (email) VALUES ('tx@x.io')", ())?; // duplicate: aborts
+        Ok(())
+    });
+    assert!(r.is_err());
+    assert_eq!(run("SELECT COUNT(*) FROM users").rows, vec![vec![PropValue::Int(3)]]);
+    run("DROP TABLE users");
+    assert!(matches!(db.sql("DROP TABLE users", ()), Err(BknError::TableNotFound(_))));
+    run("DROP TABLE IF EXISTS users");
+}
+
+/// `MATCH` pattern queries over the graph.
+#[cfg(all(feature = "graph", feature = "relational"))]
+pub fn graph_query_suite<B: StorageBackend>(backend: B) {
+    use std::collections::BTreeMap;
+
+    use crate::graph::{GraphDb, Properties};
+    use crate::lang::Params;
+    use crate::value::PropValue;
+    use crate::BknError;
+
+    let db = GraphDb::new(backend);
+    let person = |name: &str, age: i64| {
+        let mut p = Properties::new();
+        p.insert("name".into(), name.into());
+        p.insert("age".into(), age.into());
+        db.create_node("Person", p).unwrap()
+    };
+    let company = |name: &str| {
+        let mut p = Properties::new();
+        p.insert("name".into(), name.into());
+        db.create_node("Company", p).unwrap()
+    };
+    let edge = |a, t: &str, b, since: Option<i64>| {
+        let mut p = Properties::new();
+        if let Some(s) = since {
+            p.insert("since".into(), s.into());
+        }
+        db.create_edge(a, t, b, p).unwrap()
+    };
+    let (ana, budi, citra, dewi) = (person("ana", 30), person("budi", 25), person("citra", 41), person("dewi", 19));
+    let (acme, globex) = (company("Acme"), company("Globex"));
+    edge(ana, "KNOWS", budi, Some(2020));
+    edge(budi, "KNOWS", citra, Some(2021));
+    edge(citra, "KNOWS", ana, None);
+    edge(ana, "KNOWS", dewi, Some(2020));
+    edge(ana, "WORKS_AT", acme, None);
+    edge(budi, "WORKS_AT", acme, None);
+    edge(citra, "WORKS_AT", globex, None);
+
+    let q = |text: &str, params: Params| db.query(text, params).unwrap_or_else(|e| panic!("{text}: {e}"));
+    let col0 = |text: &str, params: Params| -> Vec<PropValue> { q(text, params).rows.into_iter().map(|r| r[0].clone()).collect() };
+    let strs = |v: &[&str]| v.iter().map(|s| PropValue::from(*s)).collect::<Vec<_>>();
+    let none = Params::none;
+
+    for pass in ["scan", "indexed"] {
+        if pass == "indexed" {
+            db.create_property_index("Person", "name").unwrap();
+        }
+        // Directions.
+        assert_eq!(col0("MATCH (a:Person {name: 'ana'})-[:KNOWS]->(b) RETURN b.name ORDER BY b.name", none()), strs(&["budi", "dewi"]), "{pass}");
+        assert_eq!(col0("MATCH (b:Person {name: $n})<-[:KNOWS]-(a) RETURN a.name", Params::named([("n", "budi")])), strs(&["ana"]));
+        assert_eq!(
+            col0("MATCH (a:Person)-[:KNOWS]-(b) WHERE a.name = 'ana' RETURN b.name ORDER BY b.name", none()),
+            strs(&["budi", "citra", "dewi"])
+        );
+        assert_eq!(col0("MATCH (a {name: 'dewi'})<--(b) RETURN b.name", none()), strs(&["ana"]));
+        assert_eq!(col0("MATCH (a {name: 'dewi'})--(b) RETURN b.name", none()), strs(&["ana"]));
+    }
+
+    // Variable-length paths (edges never reused, so the 3-hop cycle back to
+    // ana is found but not 4+ hops).
+    assert_eq!(col0("MATCH (a {name: 'ana'})-[:KNOWS*2]->(c) RETURN c.name", none()), strs(&["citra"]));
+    assert_eq!(
+        col0("MATCH (a {name: 'ana'})-[:KNOWS*1..3]->(c) RETURN DISTINCT c.name ORDER BY c.name", none()),
+        strs(&["ana", "budi", "citra", "dewi"])
+    );
+    let path = q("MATCH (a {name: 'ana'})-[p:KNOWS*..2]->(c {name: 'citra'}) RETURN p", none());
+    let PropValue::List(edges) = &path.rows[0][0] else { panic!("{path:?}") };
+    assert_eq!(edges.len(), 2);
+
+    // Longer patterns, cross-variable WHERE, labels, cycles.
+    let coworkers = q(
+        "MATCH (a:Person)-[:WORKS_AT]->(c:Company)<-[:WORKS_AT]-(b:Person) WHERE a.name < b.name RETURN a.name, b.name, c.name",
+        none(),
+    );
+    assert_eq!(coworkers.columns, vec!["a.name", "b.name", "c.name"]);
+    assert_eq!(coworkers.rows, vec![strs(&["ana", "budi", "Acme"])]);
+    assert_eq!(
+        col0("MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c)-[:KNOWS]->(a) RETURN a.name ORDER BY a.name", none()),
+        strs(&["ana", "budi", "citra"])
+    );
+    assert_eq!(col0("MATCH (a {name: 'ana'})-->(x) WHERE x:Company RETURN x.name", none()), strs(&["Acme"]));
+    assert_eq!(col0("MATCH (a {name: 'ana'})-[:WORKS_AT|KNOWS]->(x) RETURN count(*)", none()), vec![PropValue::Int(3)]);
+
+    // Aggregation.
+    let per_company = q(
+        "MATCH (p:Person)-[:WORKS_AT]->(c:Company) RETURN c.name AS company, count(*) AS n, collect(p.name) AS people, avg(p.age) AS age ORDER BY n DESC",
+        none(),
+    );
+    assert_eq!(per_company.columns, vec!["company", "n", "people", "age"]);
+    assert_eq!(
+        per_company.rows,
+        vec![
+            vec!["Acme".into(), 2.into(), PropValue::List(strs(&["ana", "budi"])), 27.5.into()],
+            vec!["Globex".into(), 1.into(), PropValue::List(strs(&["citra"])), 41.0.into()],
+        ]
+    );
+    assert_eq!(q("MATCH (p:Person {name: 'zed'}) RETURN count(*)", none()).rows, vec![vec![PropValue::Int(0)]]);
+    assert_eq!(
+        q("MATCH (p:Person) RETURN sum(p.age), min(p.age), max(p.name)", none()).rows,
+        vec![vec![115.into(), 19.into(), "dewi".into()]]
+    );
+
+    // Functions, relationship variables, whole entities.
+    let rel = q("MATCH (a)-[r:KNOWS {since: 2020}]->(b) RETURN type(r), r.since, a.name, b.name ORDER BY b.name", none());
+    assert_eq!(rel.rows, vec![
+        vec!["KNOWS".into(), 2020.into(), "ana".into(), "budi".into()],
+        vec!["KNOWS".into(), 2020.into(), "ana".into(), "dewi".into()],
+    ]);
+    let whole = q("MATCH (n) WHERE id(n) = $id RETURN n, label(n)", Params::named([("id", dewi.0 as i64)]));
+    let mut expected = BTreeMap::new();
+    expected.insert("id".to_string(), PropValue::Int(dewi.0 as i64));
+    expected.insert("label".to_string(), "Person".into());
+    let mut props = BTreeMap::new();
+    props.insert("name".to_string(), "dewi".into());
+    props.insert("age".to_string(), 19.into());
+    expected.insert("properties".to_string(), PropValue::Map(props));
+    assert_eq!(whole.rows, vec![vec![PropValue::Map(expected), "Person".into()]]);
+    let star = q("MATCH (a {name: 'budi'})-[r:WORKS_AT]->(c) RETURN *", none());
+    assert_eq!(star.columns, vec!["a", "c", "r"]);
+
+    // Predicates, paging.
+    assert_eq!(col0("MATCH (p:Person) WHERE p.name STARTS WITH 'c' OR p.name ENDS WITH 'wi' RETURN p.name ORDER BY p.name", none()), strs(&["citra", "dewi"]));
+    assert_eq!(col0("MATCH (p:Person) WHERE p.name IN ['ana', 'zed'] AND NOT p.age < 20 RETURN p.name", none()), strs(&["ana"]));
+    assert_eq!(col0("MATCH (p:Person) WHERE p.city IS NULL AND p.name CONTAINS 'itr' RETURN p.name", none()), strs(&["citra"]));
+    assert_eq!(col0("MATCH (p:Person) WHERE p.name ILIKE 'B%' RETURN p.name", none()), strs(&["budi"]));
+    assert_eq!(col0("MATCH (p:Person) RETURN p.name ORDER BY p.age DESC SKIP 1 LIMIT 2", none()), strs(&["ana", "budi"]));
+    assert_eq!(q("MATCH (p:Person) RETURN p.name LIMIT 2", none()).rows.len(), 2);
+    assert_eq!(col0("MATCH (p:Person) WHERE p.age > $min RETURN p.name ORDER BY p.name", Params::named([("min", 29)])), strs(&["ana", "citra"]));
+
+    // Errors.
+    for (text, needle) in [
+        ("CREATE (n)", "expected MATCH"),
+        ("MATCH (a) RETURN b", "'b' is not defined"),
+        ("MATCH (a)-[r]->(b) RETURN label(r)", "not a node"),
+        ("MATCH (a)-[r*]->(b) RETURN r.since", "variable-length"),
+        ("MATCH (a)-[*1..99]->(b) RETURN a", "hop range"),
+        ("MATCH (a), (b) RETURN a", "single path pattern"),
+        ("MATCH (a) RETURN count(*) ORDER BY a.name", "must name a RETURN column"),
+    ] {
+        let err = db.query(text, ()).unwrap_err();
+        assert!(matches!(err, BknError::InvalidQuery(_)), "{text}: {err}");
+        assert!(err.to_string().contains(needle), "{text}: {err}");
+    }
+
+    // Inside a write batch, queries see the batch's own writes.
+    db.write_tx(|tx| {
+        let mut g = tx.graph();
+        let mut p = Properties::new();
+        p.insert("name".into(), "eka".into());
+        let eka = g.create_node("Person", p)?;
+        g.create_edge(eka, "KNOWS", ana, Properties::new())?;
+        let r = g.query("MATCH (e {name: 'eka'})-[:KNOWS]->(x) RETURN x.name", ())?;
+        assert_eq!(r.rows, vec![vec![PropValue::from("ana")]]);
+        Ok(())
+    })
+    .unwrap();
+    let _ = globex;
+}
+
+/// Full-text (BM25) and vector search, including index maintenance.
+#[cfg(all(feature = "graph", feature = "relational", feature = "search"))]
+pub fn search_suite<B: StorageBackend>(backend: B) {
+    use crate::relational::{col, pack_vector, ColumnKind, ColumnSchema, RelationalDb, ScoredRow, TableSchema, VectorMetric};
+    use crate::value::{PropValue, Properties};
+    use crate::BknError;
+
+    let db = RelationalDb::new(backend);
+    let docs = TableSchema::builder("docs")
+        .column(ColumnSchema::new("id", ColumnKind::Int))
+        .column(ColumnSchema::new("title", ColumnKind::Str))
+        .column(ColumnSchema::new("body", ColumnKind::Str))
+        .column(ColumnSchema::new("lang", ColumnKind::Str))
+        .column(ColumnSchema::new("emb", ColumnKind::List))
+        .column(ColumnSchema::new("packed", ColumnKind::Bytes))
+        .primary_key("id")
+        .build()
+        .unwrap();
+    db.create_table(&docs).unwrap();
+    let t = db.table_named("docs").unwrap();
+    let row = |id: i64, title: &str, body: &str, lang: &str, emb: [f32; 3]| {
+        let mut p = Properties::new();
+        p.insert("id".into(), id.into());
+        p.insert("title".into(), title.into());
+        p.insert("body".into(), body.into());
+        p.insert("lang".into(), lang.into());
+        p.insert("emb".into(), PropValue::List(emb.iter().map(|x| PropValue::Float(*x as f64)).collect()));
+        p.insert("packed".into(), pack_vector(&emb));
+        p
+    };
+    // Row 1 exists before the index: it must be backfilled.
+    t.insert(row(1, "Rust ownership", "Ownership and borrowing in Rust, the borrow checker explained.", "en", [1.0, 0.0, 0.0]))
+        .unwrap();
+    assert!(db.create_fulltext_index("docs", "body").unwrap());
+    assert!(!db.create_fulltext_index("docs", "body").unwrap());
+    assert_eq!(db.fulltext_indexes("docs").unwrap(), vec!["body"]);
+    t.insert(row(2, "Graph databases", "A graph database stores nodes and edges. Graph queries traverse edges.", "en", [0.0, 1.0, 0.0]))
+        .unwrap();
+    t.insert(row(3, "Basis data graf", "Basis data graf menyimpan simpul dan sisi; kueri graf menelusuri sisi.", "id", [0.0, 0.9, 0.1]))
+        .unwrap();
+    t.insert(row(4, "Rust and graphs", "Writing a graph database engine in Rust.", "en", [0.7, 0.7, 0.0])).unwrap();
+
+    let ids = |hits: Vec<ScoredRow>| -> Vec<i64> {
+        hits.into_iter()
+            .map(|h| match h.row.pk {
+                PropValue::Int(i) => i,
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    };
+    let search = |q: &str, all: bool| ids(db.search_text("docs", "body", q, 10, all, None).unwrap());
+
+    // BM25: "graph" appears twice in doc 2 (short doc) and once in doc 4.
+    assert_eq!(search("graph", false), vec![2, 4]);
+    assert_eq!(search("GRAPH database", false)[..2], [2, 4]);
+    assert_eq!(search("rust graph", true), vec![4], "match_all needs every term");
+    assert_eq!(search("rust", false), vec![4, 1], "same tf: the shorter document ranks first");
+    assert_eq!(search("borrow*", false), vec![1], "prefix matches 'borrowing' and 'borrow'");
+    assert_eq!(search("graf", false), vec![3], "language-neutral tokens");
+    assert!(search("nothing-here", false).is_empty());
+    let hits = db.search_text("docs", "body", "graph", 1, false, Some(&col("lang").eq("en"))).unwrap();
+    assert_eq!(ids(hits.clone()), vec![2]);
+    assert!(hits[0].score > 0.0);
+    assert_eq!(ids(db.search_text("docs", "body", "graph", 10, false, Some(&col("id").gt(2))).unwrap()), vec![4]);
+
+    // Maintenance: update, delete, upsert, rolled-back writes.
+    t.update().where_eq("id", 1).set("body", "Nothing about that topic anymore.").run().unwrap();
+    assert_eq!(search("rust", false), vec![4]);
+    assert_eq!(search("topic", false), vec![1]);
+    t.delete().where_eq("id", 4).run().unwrap();
+    assert!(search("rust", false).is_empty());
+    let mut again = row(4, "x", "Rust again", "en", [0.0, 0.0, 1.0]);
+    again.remove("id");
+    t.upsert_with_pk(PropValue::Int(4), again).unwrap();
+    assert_eq!(search("rust", false), vec![4]);
+    let _ = db.write_tx(|tx| -> Result<(), BknError> {
+        tx.view().table_named("docs")?.insert(row(9, "t", "ephemeral rust", "en", [1.0, 1.0, 1.0]))?;
+        Err(BknError::NotFound) // roll back
+    });
+    assert_eq!(search("ephemeral", false), Vec::<i64>::new());
+
+    // Errors.
+    assert!(matches!(db.search_text("docs", "title", "x", 5, false, None), Err(BknError::InvalidQuery(_))));
+    assert!(db.create_fulltext_index("docs", "emb").is_err());
+    assert!(db.create_fulltext_index("docs", "nope").is_err());
+    assert!(db.search_text("docs", "body", "x", 5, false, Some(&col("nope").eq(1))).is_err());
+
+    // Vector search, both storage forms and all metrics.
+    for column in ["emb", "packed"] {
+        let near = |q: [f32; 3], metric| ids(db.search_vector("docs", column, &q, 2, metric, None).unwrap());
+        assert_eq!(near([0.0, 1.0, 0.05], VectorMetric::Cosine), vec![2, 3], "{column}");
+        assert_eq!(near([0.0, 0.0, 1.0], VectorMetric::Euclidean), vec![4, 3]);
+        assert_eq!(near([2.0, 0.1, 0.0], VectorMetric::Dot), vec![1, 2]);
+    }
+    let best = db.search_vector("docs", "emb", &[0.0, 1.0, 0.0], 1, VectorMetric::Cosine, None).unwrap();
+    assert!((best[0].score - 1.0).abs() < 1e-6);
+    let filtered = db.search_vector("docs", "packed", &[0.0, 1.0, 0.0], 5, VectorMetric::Cosine, Some(&col("lang").eq("id"))).unwrap();
+    assert_eq!(ids(filtered), vec![3]);
+    assert!(matches!(db.search_vector("docs", "emb", &[1.0, 0.0], 3, VectorMetric::Dot, None), Err(BknError::InvalidQuery(_))));
+    assert!(db.search_vector("docs", "title", &[1.0], 3, VectorMetric::Dot, None).is_err());
+
+    // Dropping the column (migration) or the table drops the index data.
+    let without_body = docs.to_builder().drop_column("body").build().unwrap();
+    db.ensure_table(&without_body).unwrap();
+    assert!(db.fulltext_indexes("docs").unwrap().is_empty());
+    db.ensure_table(&docs).unwrap();
+    db.create_fulltext_index("docs", "title").unwrap();
+    assert!(db.drop_table("docs").unwrap());
+    assert!(db.fulltext_indexes("docs").unwrap().is_empty());
+    db.create_table(&docs).unwrap();
+    db.create_fulltext_index("docs", "title").unwrap();
+    assert!(db.search_text("docs", "title", "graph", 5, false, None).unwrap().is_empty(), "no stale postings");
+    assert!(db.drop_fulltext_index("docs", "title").unwrap());
+    assert!(!db.drop_fulltext_index("docs", "title").unwrap());
 }

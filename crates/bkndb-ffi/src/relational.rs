@@ -16,6 +16,10 @@ pub enum FfiColumnKind {
     Float,
     Str,
     Bytes,
+    Timestamp,
+    Uuid,
+    List,
+    Map,
 }
 
 impl From<FfiColumnKind> for ColumnKind {
@@ -26,6 +30,10 @@ impl From<FfiColumnKind> for ColumnKind {
             FfiColumnKind::Float => ColumnKind::Float,
             FfiColumnKind::Str => ColumnKind::Str,
             FfiColumnKind::Bytes => ColumnKind::Bytes,
+            FfiColumnKind::Timestamp => ColumnKind::Timestamp,
+            FfiColumnKind::Uuid => ColumnKind::Uuid,
+            FfiColumnKind::List => ColumnKind::List,
+            FfiColumnKind::Map => ColumnKind::Map,
         }
     }
 }
@@ -39,6 +47,10 @@ impl TryFrom<ColumnKind> for FfiColumnKind {
             ColumnKind::Float => FfiColumnKind::Float,
             ColumnKind::Str => FfiColumnKind::Str,
             ColumnKind::Bytes => FfiColumnKind::Bytes,
+            ColumnKind::Timestamp => FfiColumnKind::Timestamp,
+            ColumnKind::Uuid => FfiColumnKind::Uuid,
+            ColumnKind::List => FfiColumnKind::List,
+            ColumnKind::Map => FfiColumnKind::Map,
             ColumnKind::Null => return Err(invalid("a column cannot have kind Null")),
         })
     }
@@ -150,6 +162,13 @@ pub enum FfiExprOp {
     Or,
     /// Negation of `children[0]`.
     Not,
+    /// List `column` has an element equal to `values[0]`, string `column`
+    /// contains it as a substring, or map `column` has it as a key.
+    Contains,
+    /// String `column` matches the SQL LIKE pattern `values[0]`.
+    Like,
+    /// Case-insensitive `Like`.
+    ILike,
 }
 
 /// One node of a filter expression. A filter is a list of nodes in
@@ -188,6 +207,45 @@ pub struct FfiQuery {
     pub columns: Option<Vec<String>>,
 }
 
+/// A search hit: the row and its score (BM25 for text; for vectors the
+/// cosine similarity, dot product or Euclidean distance).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiScoredRow {
+    pub row: FfiRow,
+    pub score: f64,
+}
+
+impl From<bkndb_core::relational::ScoredRow> for FfiScoredRow {
+    fn from(s: bkndb_core::relational::ScoredRow) -> Self {
+        Self { row: s.row.into(), score: s.score }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiVectorMetric {
+    /// Cosine similarity, highest first.
+    Cosine,
+    /// Dot product, highest first.
+    Dot,
+    /// Euclidean distance, lowest first.
+    Euclidean,
+}
+
+impl From<FfiVectorMetric> for bkndb_core::relational::VectorMetric {
+    fn from(m: FfiVectorMetric) -> Self {
+        match m {
+            FfiVectorMetric::Cosine => Self::Cosine,
+            FfiVectorMetric::Dot => Self::Dot,
+            FfiVectorMetric::Euclidean => Self::Euclidean,
+        }
+    }
+}
+
+/// A standalone filter (post-order nodes, as in `FfiQuery::filter`).
+pub(crate) fn filter_expr(nodes: Vec<FfiExprNode>) -> Result<Option<Expr>, FfiBknError> {
+    build_expr(nodes)
+}
+
 fn build_expr(nodes: Vec<FfiExprNode>) -> Result<Option<Expr>, FfiBknError> {
     if nodes.is_empty() {
         return Ok(None);
@@ -222,6 +280,11 @@ fn build_expr(nodes: Vec<FfiExprNode>) -> Result<Option<Expr>, FfiBknError> {
             FfiExprOp::StartsWith => match n.values.as_slice() {
                 [FfiPropValue::Str(p)] => Expr::Prefix(column()?, p.clone()),
                 _ => return Err(invalid(format!("filter node {i} (StartsWith) needs one string value"))),
+            },
+            FfiExprOp::Contains => Expr::Contains(column()?, one_value()?),
+            FfiExprOp::Like | FfiExprOp::ILike => match n.values.as_slice() {
+                [FfiPropValue::Str(p)] => Expr::Like(column()?, p.clone(), n.op == FfiExprOp::ILike),
+                _ => return Err(invalid(format!("filter node {i} ({:?}) needs one string pattern", n.op))),
             },
             FfiExprOp::And => Expr::And(children),
             FfiExprOp::Or => Expr::Or(children),

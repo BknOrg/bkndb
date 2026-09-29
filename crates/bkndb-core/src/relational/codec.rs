@@ -88,37 +88,28 @@ pub(crate) fn meta_table() -> TableSpec {
 ///   values never contain an embedded NUL byte — a real constraint of this
 ///   scheme, acceptable for this project's use (paths, identifiers, names).
 pub fn sortable_encode(value: &PropValue) -> Result<Vec<u8>, BknError> {
-    match value {
-        PropValue::Int(i) => {
-            let flipped = (*i as u64) ^ 0x8000_0000_0000_0000;
-            Ok(flipped.to_be_bytes().to_vec())
-        }
-        PropValue::Str(s) => {
-            if s.as_bytes().contains(&0) {
-                // The 0x00 terminator is what keeps prefixes ordered and lets
-                // index keys be split back into value + pk.
-                return Err(BknError::Encoding(
-                    "strings used as a primary key or indexed value cannot contain a NUL byte".to_string(),
-                ));
-            }
-            let mut out = s.as_bytes().to_vec();
-            out.push(0);
-            Ok(out)
-        }
-        _ => Err(BknError::Encoding(
-            "only Int/Str values can be used as a primary key or indexed column".to_string(),
-        )),
-    }
+    crate::value::sortable_key(value).ok_or_else(|| {
+        BknError::Encoding(match value {
+            PropValue::Str(_) => "strings used as a primary key or indexed value cannot contain a NUL byte".to_string(),
+            _ => "only Int/Str/Timestamp/Uuid values can be used as a primary key or indexed column".to_string(),
+        })
+    })
 }
 
 pub fn decode_sortable(kind: ColumnKind, bytes: &[u8]) -> Result<PropValue, BknError> {
     match kind {
-        ColumnKind::Int => {
+        ColumnKind::Int | ColumnKind::Timestamp => {
             let raw: [u8; 8] = bytes
                 .try_into()
                 .map_err(|_| BknError::Encoding("corrupt sortable int key".to_string()))?;
-            let flipped = u64::from_be_bytes(raw);
-            Ok(PropValue::Int((flipped ^ 0x8000_0000_0000_0000) as i64))
+            let n = (u64::from_be_bytes(raw) ^ 0x8000_0000_0000_0000) as i64;
+            Ok(if kind == ColumnKind::Int { PropValue::Int(n) } else { PropValue::Timestamp(n) })
+        }
+        ColumnKind::Uuid => {
+            let raw: [u8; 16] = bytes
+                .try_into()
+                .map_err(|_| BknError::Encoding("corrupt sortable uuid key".to_string()))?;
+            Ok(PropValue::Uuid(raw))
         }
         ColumnKind::Str => {
             let (last, rest) = bytes
@@ -133,7 +124,7 @@ pub fn decode_sortable(kind: ColumnKind, bytes: &[u8]) -> Result<PropValue, BknE
             Ok(PropValue::Str(s))
         }
         _ => Err(BknError::Encoding(
-            "only Int/Str columns support sortable decoding".to_string(),
+            "only Int/Str/Timestamp/Uuid columns support sortable decoding".to_string(),
         )),
     }
 }
@@ -241,14 +232,15 @@ pub fn bump_pk_counter_past<W: StorageWriteTx>(wtx: &mut W, schema: &TableSchema
 /// queried value's exact encoded length up front.
 fn indexed_value_len(kind: ColumnKind, key: &[u8]) -> Result<usize, BknError> {
     match kind {
-        ColumnKind::Int => Ok(8),
+        ColumnKind::Int | ColumnKind::Timestamp => Ok(8),
+        ColumnKind::Uuid => Ok(16),
         ColumnKind::Str => key
             .iter()
             .position(|&b| b == 0)
             .map(|pos| pos + 1)
             .ok_or_else(|| BknError::Encoding("index key missing str terminator".to_string())),
         _ => Err(BknError::Encoding(
-            "only Int/Str columns support indexing".to_string(),
+            "only Int/Str/Timestamp/Uuid columns support indexing".to_string(),
         )),
     }
 }

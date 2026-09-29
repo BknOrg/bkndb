@@ -7,24 +7,32 @@ ever import from :mod:`bkndb`, never reach into :mod:`bkndb._native`.
 """
 from __future__ import annotations
 
+import csv
+import json
+import os
 import typing
 
-from . import errors, types
+from . import _io, errors, types
 from ._native.bkndb_ffi import (
     BknDbEngine,
     BknDbTransaction,
     FfiEdgeInput,
+    FfiLinkedEdgeInput,
     FfiLsmOptions,
     FfiNodeInput,
+    FfiNodeRef,
     FfiSyncBatch,
     FfiTableRows,
+    FfiVectorMetric,
 )
-from .query import Agg, OrderBy, Where, to_ffi_query
+from .query import Agg, OrderBy, Where, _where_expr, col, to_ffi_filter, to_ffi_query
 
 T = typing.TypeVar("T")
 
 NodeSpec = typing.Tuple[str, types.PropertiesLike]
 EdgeSpec = typing.Tuple[int, str, int, types.PropertiesLike]
+NodeRefLike = typing.Union[int, types.NewNode]
+SyncEdgeSpec = typing.Tuple[NodeRefLike, str, NodeRefLike, types.PropertiesLike]
 
 
 def _call(fn: typing.Callable[[], T]) -> T:
@@ -38,8 +46,27 @@ def _call(fn: typing.Callable[[], T]) -> T:
         raise mapped from exc
 
 
+def _node_ref(r: "NodeRefLike") -> typing.Any:
+    if isinstance(r, types.NewNode):
+        return FfiNodeRef.NEW(r.index)
+    return FfiNodeRef.EXISTING(r)
+
+
 def _props(p: typing.Optional[typing.Mapping[str, types.PropertyValue]]) -> dict:
     return types.to_ffi_properties(p or {})
+
+
+Params = typing.Union[typing.Sequence[types.PropertyValue], typing.Mapping[str, types.PropertyValue], None]
+
+
+def _params(params: Params) -> typing.Tuple[list, typing.Optional[dict]]:
+    if params is None:
+        return [], None
+    if isinstance(params, typing.Mapping):
+        return [], {str(k): types.to_ffi_value(v) for k, v in params.items()}
+    if isinstance(params, (str, bytes)):
+        raise TypeError("params must be a list/tuple or a dict, not a single value")
+    return [types.to_ffi_value(v) for v in params], None
 
 
 def _row_or_none(record) -> typing.Optional[types.Row]:
@@ -134,6 +161,16 @@ class _Operations:
         result = _call(lambda: self._h.neighbors(node_id, direction._to_ffi(), edge_type))
         return [types.TypedNeighbor._from_ffi(n) for n in result]
 
+    def nodes_by_label(self, label: str) -> typing.List[int]:
+        """Ids of every node with `label`, ascending."""
+        return _call(lambda: self._h.nodes_by_label(label))
+
+    def find_nodes(self, label: str, property: str, value: types.PropertyValue) -> typing.List[int]:  # noqa: A002
+        """Ids of nodes with `label` whose `property` equals `value`. A fast
+        lookup once :meth:`Database.create_node_index` indexed the property."""
+        ffi = types.to_ffi_value(value)
+        return _call(lambda: self._h.find_nodes(label, property, ffi))
+
     # ----- tables --------------------------------------------------------------
 
     def create_table(self, schema: types.TableSchema) -> bool:
@@ -217,6 +254,36 @@ class _Operations:
         """A handle on one table, so its name needn't be repeated."""
         return Table(self, name)
 
+    # ----- query languages -------------------------------------------------------
+
+    def sql(self, query: str, params: "Params" = None) -> types.QueryResult:
+        """Runs one SQL statement on the relational tables::
+
+            db.sql("CREATE TABLE users (id INT PRIMARY KEY AUTOINCREMENT, name TEXT, age INT)")
+            db.sql("INSERT INTO users (name, age) VALUES (?, ?)", ["Ana", 30])
+            db.sql("SELECT name FROM users WHERE age >= :min ORDER BY name", {"min": 18}).column("name")
+
+        ``params`` is a list (for ``?``, ``?N``, ``$N``) or a dict (for
+        ``:name``). A ``SELECT`` reads a snapshot; any other statement runs
+        atomically (on a :class:`Transaction`, inside it). Raises
+        :class:`bkndb.QueryError` for syntax errors."""
+        positional, named = _params(params)
+        return types.QueryResult._from_ffi(_call(lambda: self._h.sql(query, positional, named)))
+
+    def graph_query(self, query: str, params: "Params" = None) -> types.QueryResult:
+        """Runs a Cypher-style ``MATCH ... RETURN ...`` query on the graph::
+
+            db.graph_query(
+                "MATCH (a:Person {name: $name})-[:KNOWS*1..2]->(b) RETURN DISTINCT b.name",
+                {"name": "Ana"},
+            )
+
+        Nodes come back as ``{"id", "label", "properties"}`` dicts, edges as
+        ``{"id", "type", "from", "to", "properties"}``. ``params``: a dict
+        for ``$name``, or a list for ``$1``/``?``."""
+        positional, named = _params(params)
+        return types.QueryResult._from_ffi(_call(lambda: self._h.graph_query(query, positional, named)))
+
 
 class Table:
     """A table-scoped view over a :class:`Database` or :class:`Transaction`::
@@ -260,6 +327,9 @@ class Table:
         return self._ops.delete_rows(self.name, where)
 
     def __iter__(self) -> typing.Iterator[types.Row]:
+        # Stream in pk-ordered batches when the handle comes from a Database.
+        if isinstance(self._ops, Database):
+            return self._ops.iter_rows(self.name)
         return iter(self.select())
 
     def __len__(self) -> int:
@@ -337,22 +407,31 @@ class Database(_Operations):
     @classmethod
     def open(
         cls,
-        path: str,
+        path: "_io.PathLike",
         *,
         memtable_flush_bytes: typing.Optional[int] = None,
         compaction_trigger_files: typing.Optional[int] = None,
+        block_size: typing.Optional[int] = None,
+        compression: typing.Optional[bool] = None,
     ) -> "Database":
         """Opens or creates an on-disk single-file database at `path`.
 
         Raises :class:`bkndb.DatabaseLockedError` if another handle or process
-        has it open. The keyword options tune the storage engine.
+        has it open, and :class:`bkndb.CorruptionError` if its structure is
+        damaged. The keyword options tune the storage engine:
+        ``memtable_flush_bytes`` (write buffer size, default 16 MiB),
+        ``compaction_trigger_files`` (default 16), ``block_size`` (bytes per
+        on-disk block, default 4096) and ``compression`` (lz4, default on).
         """
-        path = str(path)
-        if memtable_flush_bytes is None and compaction_trigger_files is None:
+        path = os.fspath(path)
+        tuned = (memtable_flush_bytes, compaction_trigger_files, block_size, compression)
+        if all(o is None for o in tuned):
             return cls(_call(lambda: BknDbEngine.open(path)), path)
         options = FfiLsmOptions(
             memtable_flush_bytes=memtable_flush_bytes if memtable_flush_bytes is not None else 16 * 1024 * 1024,
             compaction_trigger_files=compaction_trigger_files if compaction_trigger_files is not None else 16,
+            block_size_bytes=block_size,
+            compression=compression,
         )
         return cls(_call(lambda: BknDbEngine.open_with_options(path, options)), path)
 
@@ -394,8 +473,225 @@ class Database(_Operations):
         return Transaction(_call(self._h.begin_transaction))
 
     def compact(self) -> None:
-        """Reclaims disk space from overwritten and deleted data."""
+        """Rewrites the file with only live data: reclaims space from
+        overwritten/deleted data and upgrades older on-disk formats. Blocks
+        writers while it runs."""
         _call(self._h.compact)
+
+    # ----- search --------------------------------------------------------------------
+
+    def create_fulltext_index(self, table: str, column: str) -> bool:
+        """Builds a full-text index over a ``str`` column (existing rows are
+        indexed now, later writes automatically). ``False`` if it exists."""
+        return _call(lambda: self._h.create_fulltext_index(table, column))
+
+    def drop_fulltext_index(self, table: str, column: str) -> bool:
+        return _call(lambda: self._h.drop_fulltext_index(table, column))
+
+    def fulltext_indexes(self, table: str) -> typing.List[str]:
+        """Columns of `table` that have a full-text index."""
+        return list(_call(lambda: self._h.list_fulltext_indexes(table)))
+
+    def search_text(
+        self,
+        table: str,
+        column: str,
+        query: str,
+        limit: int = 10,
+        *,
+        match_all: bool = False,
+        where: Where = None,
+    ) -> typing.List[types.ScoredRow]:
+        """Rows whose `column` best matches `query`, ranked by BM25 (needs
+        :meth:`create_fulltext_index`). Matching is case-insensitive on
+        whole words; ``word*`` matches a prefix. ``match_all=True`` requires
+        every word; ``where`` filters the rows further."""
+        flt = to_ffi_filter(where)
+        hits = _call(lambda: self._h.search_text(table, column, query, limit, match_all, flt))
+        return [types.ScoredRow._from_ffi(h) for h in hits]
+
+    def search_vector(
+        self,
+        table: str,
+        column: str,
+        vector: typing.Iterable[float],
+        limit: int = 10,
+        *,
+        metric: str = "cosine",
+        where: Where = None,
+    ) -> typing.List[types.ScoredRow]:
+        """The `limit` rows whose embedding in `column` is nearest to
+        `vector` — exact search, scanning the (filtered) rows. Embeddings are
+        a ``list`` of numbers or :func:`bkndb.pack_vector` bytes. ``metric``:
+        ``"cosine"`` / ``"dot"`` (score = similarity, highest first) or
+        ``"euclidean"`` (score = distance, lowest first)."""
+        metrics = {"cosine": FfiVectorMetric.COSINE, "dot": FfiVectorMetric.DOT, "euclidean": FfiVectorMetric.EUCLIDEAN}
+        try:
+            m = metrics[metric]
+        except KeyError:
+            raise ValueError(f"metric must be one of {sorted(metrics)}") from None
+        values = [float(v) for v in vector]
+        flt = to_ffi_filter(where)
+        hits = _call(lambda: self._h.search_vector(table, column, values, limit, m, flt))
+        return [types.ScoredRow._from_ffi(h) for h in hits]
+
+    # ----- operations --------------------------------------------------------------
+
+    def backup(self, path: "_io.PathLike") -> None:
+        """Writes a consistent, compacted copy of everything committed so far
+        to a new ``.bkndb`` file at `path` (which must not exist yet). Reads
+        and writes carry on meanwhile; an open transaction's uncommitted
+        writes are not included. On-disk databases only."""
+        dest = os.fspath(path)
+        _call(lambda: self._h.backup(dest))
+
+    def stats(self) -> types.DbStats:
+        """Node, edge and per-table row counts (from one snapshot), plus file
+        figures for on-disk databases. Counting scans the data, so this is
+        for monitoring and tooling rather than hot paths."""
+        return types.DbStats._from_ffi(_call(self._h.stats))
+
+    def verify_integrity(self) -> types.IntegrityReport:
+        """Re-reads and checksums every stored byte. Raises
+        :class:`bkndb.CorruptionError` naming the first damaged structure."""
+        return types.IntegrityReport._from_ffi(_call(self._h.verify_integrity))
+
+    def _schema(self, table: str) -> types.TableSchema:
+        schema = self.table_schema(table)
+        if schema is None:
+            raise errors.TableNotFoundError(table)
+        return schema
+
+    def iter_rows(
+        self,
+        table: str,
+        where: Where = None,
+        *,
+        batch_size: int = 1000,
+        columns: typing.Optional[typing.Sequence[str]] = None,
+    ) -> typing.Iterator[types.Row]:
+        """Lazily yields the rows matching `where` in primary-key order,
+        fetching ``batch_size`` rows at a time, so memory stays bounded however
+        large the table is.
+
+        Each batch is read from the latest committed state, so rows written
+        while iterating may or may not show up; no row is yielded twice.
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        pk = self._schema(table).primary_key
+        base = _where_expr(where)
+        last: typing.Optional[types.PropertyValue] = None
+        while True:
+            after = None if last is None else col(pk) > last
+            if base is None:
+                cond = after
+            elif after is None:
+                cond = base
+            else:
+                cond = base & after
+            batch = self.select(table, cond, order_by=pk, limit=batch_size, columns=columns)
+            yield from batch
+            if len(batch) < batch_size:
+                return
+            last = batch[-1].pk
+
+    def export_jsonl(self, table: str, path: "_io.PathLike", where: Where = None) -> int:
+        """Writes the rows matching `where` to `path` as JSON Lines (one
+        object per row, primary key included); returns how many."""
+        schema = self._schema(table)
+        n = 0
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            for row in self.iter_rows(table, where):
+                f.write(json.dumps(_io.row_to_json(schema, row), ensure_ascii=False))
+                f.write("\n")
+                n += 1
+        return n
+
+    def export_csv(self, table: str, path: "_io.PathLike", where: Where = None) -> int:
+        """Writes the rows matching `where` to `path` as CSV with a header
+        row (primary key first, then columns in schema order); returns how
+        many rows."""
+        schema = self._schema(table)
+        header = _io.csv_header(schema)
+        n = 0
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            for row in self.iter_rows(table, where):
+                writer.writerow(_io.row_to_csv(header, schema, row))
+                n += 1
+        return n
+
+    def _import(
+        self,
+        table: str,
+        rows: typing.Iterable[typing.Dict[str, types.PropertyValue]],
+        mode: str,
+        batch_size: int,
+    ) -> int:
+        if mode not in ("upsert", "insert"):
+            raise ValueError("mode must be 'upsert' or 'insert'")
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        n = 0
+        with self.transaction() as tx:
+            write = tx.upsert_many if mode == "upsert" else tx.insert_many
+            batch: typing.List[typing.Dict[str, types.PropertyValue]] = []
+            for row in rows:
+                batch.append(row)
+                if len(batch) >= batch_size:
+                    write(table, batch)
+                    n += len(batch)
+                    batch = []
+            if batch:
+                write(table, batch)
+                n += len(batch)
+        return n
+
+    def import_jsonl(self, table: str, path: "_io.PathLike", *, mode: str = "upsert", batch_size: int = 1000) -> int:
+        """Loads rows from a JSON Lines file (as written by
+        :meth:`export_jsonl`) into an existing table, all in one transaction:
+        nothing is written if any row fails. ``mode="upsert"`` (default)
+        replaces rows whose primary key exists; ``"insert"`` raises
+        :class:`bkndb.DuplicateKeyError` instead. Returns how many rows."""
+        self._schema(table)
+
+        def rows() -> typing.Iterator[typing.Dict[str, types.PropertyValue]]:
+            with open(path, encoding="utf-8") as f:
+                for line_no, line in enumerate(f, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise errors.InvalidArgumentError(f"line {line_no}: invalid JSON: {exc}") from None
+                    if not isinstance(obj, dict):
+                        raise errors.InvalidArgumentError(f"line {line_no}: expected a JSON object")
+                    yield {k: _io.from_json_value(v) for k, v in obj.items()}
+
+        return self._import(table, rows(), mode, batch_size)
+
+    def import_csv(self, table: str, path: "_io.PathLike", *, mode: str = "upsert", batch_size: int = 1000) -> int:
+        """Loads rows from a CSV file with a header row of column names into
+        an existing table, converting each cell to its column's type, all in
+        one transaction. Empty cells are left out (so DEFAULT/NULL applies,
+        and an auto-increment key is assigned). ``mode`` as for
+        :meth:`import_jsonl`. Returns how many rows."""
+        schema = self._schema(table)
+
+        def rows() -> typing.Iterator[typing.Dict[str, types.PropertyValue]]:
+            with open(path, encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if header is None:
+                    return
+                for record in reader:
+                    if not record:
+                        continue
+                    yield _io.csv_record_to_row(schema, header, record, reader.line_num)
+
+        return self._import(table, rows(), mode, batch_size)
 
     # ----- graph queries ---------------------------------------------------------
 
@@ -430,6 +726,50 @@ class Database(_Operations):
         types_list = list(edge_types) if edge_types is not None else None
         result = _call(lambda: self._h.traverse(start, direction._to_ffi(), max_depth, types_list, node_label))
         return [types.TraversalHit._from_ffi(h) for h in result]
+
+    def count_nodes(self, label: str) -> int:
+        """Number of nodes with `label`."""
+        return _call(lambda: self._h.count_nodes(label))
+
+    def create_node_index(self, label: str, property: str) -> bool:  # noqa: A002
+        """Indexes `property` of nodes with `label` for :meth:`find_nodes`
+        (existing nodes are indexed immediately; only int/str values).
+        Returns ``False`` if the index already existed."""
+        return _call(lambda: self._h.create_node_index(label, property))
+
+    def drop_node_index(self, label: str, property: str) -> bool:  # noqa: A002
+        return _call(lambda: self._h.drop_node_index(label, property))
+
+    def node_indexes(self) -> typing.List[typing.Tuple[str, str]]:
+        """Every node property index as ``(label, property)``."""
+        return [(i.label, i.property) for i in _call(self._h.list_node_indexes)]
+
+    def rebuild_graph_indexes(self) -> None:
+        """Rebuilds all graph indexes. Only needed once for database files
+        created by bkndb versions without graph indexes, where label lookups
+        otherwise fall back to (correct but slower) full scans."""
+        _call(self._h.rebuild_graph_indexes)
+
+    def find_weighted_path(
+        self,
+        start: int,
+        target: int,
+        weight: str = "weight",
+        default_weight: float = 1.0,
+        direction: types.Direction = types.Direction.OUT,
+        edge_types: typing.Optional[typing.Sequence[str]] = None,
+    ) -> typing.Optional[types.WeightedPath]:
+        """Lowest-cost path (Dijkstra): each edge costs its numeric `weight`
+        property, or `default_weight` if it has none. Weights must be >= 0."""
+        types_list = list(edge_types) if edge_types is not None else None
+        result = _call(
+            lambda: self._h.find_weighted_path(
+                start, target, direction._to_ffi(), types_list, weight, float(default_weight)
+            )
+        )
+        if result is None:
+            return None
+        return types.WeightedPath(path=types.Path._from_ffi(result.path), cost=result.cost)
 
     def find_shortest_path(
         self,
@@ -492,19 +832,26 @@ class Database(_Operations):
     def sync_batch(
         self,
         nodes: typing.Sequence[NodeSpec] = (),
-        edges: typing.Sequence[EdgeSpec] = (),
+        edges: typing.Sequence[SyncEdgeSpec] = (),
         rows: typing.Optional[typing.Mapping[str, typing.Sequence[types.PropertiesLike]]] = None,
     ) -> types.SyncResult:
         """Ingests `nodes`, `edges` and relational `rows` (``{table: [row, ...]}``,
-        upserted by primary key) in a single atomic transaction."""
+        upserted by primary key) in a single atomic transaction. An edge
+        endpoint may be :class:`bkndb.NewNode` to refer to a node of this batch."""
         rows = rows or {}
+        plain, linked = [], []
+        for frm, edge_type, to, p in edges:
+            if isinstance(frm, types.NewNode) or isinstance(to, types.NewNode):
+                linked.append(
+                    FfiLinkedEdgeInput(_from=_node_ref(frm), edge_type=edge_type, to=_node_ref(to), properties=_props(p))
+                )
+            else:
+                plain.append(FfiEdgeInput(_from=frm, edge_type=edge_type, to=to, properties=_props(p)))
         batch = FfiSyncBatch(
             nodes=[FfiNodeInput(label=label, properties=_props(p)) for label, p in nodes],
-            edges=[
-                FfiEdgeInput(_from=frm, edge_type=edge_type, to=to, properties=_props(p))
-                for frm, edge_type, to, p in edges
-            ],
+            edges=plain,
             rows=[FfiTableRows(table=t, rows=[_props(r) for r in rs]) for t, rs in rows.items()],
+            linked_edges=linked,
         )
         result = _call(lambda: self._h.sync_batch(batch))
         return types.SyncResult(

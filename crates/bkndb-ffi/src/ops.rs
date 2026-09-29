@@ -10,8 +10,8 @@ use bkndb_core::{BknError, DbReadBatch, DbWriteBatch, StorageReadTx, StorageWrit
 
 use crate::relational::FfiRow;
 use crate::types::{
-    core_props_to_ffi, ffi_props_to_core, FfiEdgeRecord, FfiNodeRecord, FfiPropValue, FfiSyncBatch, FfiSyncResult,
-    FfiTraversalHit, FfiTypedNeighbor,
+    core_props_to_ffi, ffi_props_to_core, FfiEdgeRecord, FfiNodeRecord, FfiNodeRef, FfiPropValue, FfiPropertyIndex,
+    FfiSyncBatch, FfiSyncResult, FfiTraversalHit, FfiTypedNeighbor, FfiWeightedPath,
 };
 
 pub(crate) type FfiProps = HashMap<String, FfiPropValue>;
@@ -135,6 +135,55 @@ pub(crate) fn tx_neighbors<W: StorageWriteTx>(
     Ok(typed_neighbors(neighbors_of!(g, NodeId(node), direction, edge_type)))
 }
 
+// ---- Graph indexes ----
+
+fn ids(v: Vec<NodeId>) -> Vec<u64> {
+    v.into_iter().map(|n| n.0).collect()
+}
+
+pub(crate) fn tx_nodes_by_label<W: StorageWriteTx>(b: &mut DbWriteBatch<W>, label: &str) -> Result<Vec<u64>, BknError> {
+    Ok(ids(b.graph().nodes_by_label(label)?))
+}
+
+pub(crate) fn tx_find_nodes<W: StorageWriteTx>(b: &mut DbWriteBatch<W>, label: &str, property: &str, value: PropValue) -> Result<Vec<u64>, BknError> {
+    Ok(ids(b.graph().find_nodes(label, property, &value)?))
+}
+
+pub(crate) fn set_node_index<W: StorageWriteTx>(b: &mut DbWriteBatch<W>, label: &str, property: &str, create: bool) -> Result<bool, BknError> {
+    let mut g = b.graph();
+    if create { g.create_property_index(label, property) } else { g.drop_property_index(label, property) }
+}
+
+pub(crate) fn rebuild_graph_indexes<W: StorageWriteTx>(b: &mut DbWriteBatch<W>) -> Result<(), BknError> {
+    b.graph().rebuild_indexes()
+}
+
+pub(crate) fn nodes_by_label<R: StorageReadTx>(r: &DbReadBatch<R>, label: &str) -> Result<Vec<u64>, BknError> {
+    Ok(ids(r.graph().nodes_by_label(label)?))
+}
+
+pub(crate) fn find_nodes<R: StorageReadTx>(r: &DbReadBatch<R>, label: &str, property: &str, value: PropValue) -> Result<Vec<u64>, BknError> {
+    Ok(ids(r.graph().find_nodes(label, property, &value)?))
+}
+
+pub(crate) fn node_indexes<R: StorageReadTx>(r: &DbReadBatch<R>) -> Result<Vec<FfiPropertyIndex>, BknError> {
+    Ok(r.graph().property_indexes()?.into_iter().map(|(label, property)| FfiPropertyIndex { label, property }).collect())
+}
+
+pub(crate) fn weighted_path<R: StorageReadTx>(
+    r: &DbReadBatch<R>,
+    start: u64,
+    target: u64,
+    direction: Direction,
+    edge_types: Option<Vec<String>>,
+    weight_property: &str,
+    default_weight: f64,
+) -> Result<Option<FfiWeightedPath>, BknError> {
+    let refs: Option<Vec<&str>> = edge_types.as_ref().map(|v| v.iter().map(String::as_str).collect());
+    let found = r.graph().find_weighted_path(NodeId(start), NodeId(target), direction, refs.as_deref(), weight_property, default_weight)?;
+    Ok(found.map(|w| FfiWeightedPath { path: w.path.into(), cost: w.cost }))
+}
+
 // ---- Graph reads on a snapshot ----
 
 pub(crate) fn neighbors<R: StorageReadTx>(
@@ -234,7 +283,20 @@ pub(crate) fn delete_rows<W: StorageWriteTx>(b: &mut DbWriteBatch<W>, table: &st
 /// Graph nodes/edges plus relational rows (upserted) in one transaction.
 pub(crate) fn sync<W: StorageWriteTx>(b: &mut DbWriteBatch<W>, batch: FfiSyncBatch) -> Result<FfiSyncResult, BknError> {
     let node_ids = create_nodes(b, batch.nodes.into_iter().map(|n| (n.label, n.properties)).collect())?;
-    let edge_ids = create_edges(b, batch.edges.into_iter().map(|e| (e.from, e.edge_type, e.to, e.properties)).collect())?;
+    let resolve = |r: FfiNodeRef| -> Result<u64, BknError> {
+        match r {
+            FfiNodeRef::Existing { id } => Ok(id),
+            FfiNodeRef::New { index } => node_ids.get(index as usize).copied().ok_or_else(|| {
+                BknError::Encoding(format!("linked edge refers to new node {index}, but the batch creates {}", node_ids.len()))
+            }),
+        }
+    };
+    let mut edges: Vec<(u64, String, u64, FfiProps)> =
+        batch.edges.into_iter().map(|e| (e.from, e.edge_type, e.to, e.properties)).collect();
+    for e in batch.linked_edges {
+        edges.push((resolve(e.from)?, e.edge_type, resolve(e.to)?, e.properties));
+    }
+    let edge_ids = create_edges(b, edges)?;
     let mut row_pks = Vec::with_capacity(batch.rows.len());
     for t in batch.rows {
         let pks = insert_many(b, &t.table, t.rows, true)?;

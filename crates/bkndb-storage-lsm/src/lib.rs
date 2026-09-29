@@ -16,4 +16,4 @@ mod memtable;
 mod sstable;
 mod wal;
 
-pub use engine::{LsmOptions, LsmStorageBackend};
+pub use engine::{IntegrityReport, LsmOptions, LsmStats, LsmStorageBackend};

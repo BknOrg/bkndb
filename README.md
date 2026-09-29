@@ -27,7 +27,7 @@ Add `bkndb` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bkndb = "0.1"
+bkndb = "0.2"
 ```
 
 ### Basic Example

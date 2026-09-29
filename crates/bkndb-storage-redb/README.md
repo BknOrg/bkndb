@@ -12,7 +12,7 @@ Most users should use the top-level [`bkndb`](https://crates.io/crates/bkndb) cr
 
 ```toml
 [dependencies]
-bkndb = { version = "0.1", features = ["redb-backend"] }
+bkndb = { version = "0.2", features = ["redb-backend"] }
 ```
 
 ## License

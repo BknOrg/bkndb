@@ -1,7 +1,7 @@
 use std::ops::Bound;
 use std::path::Path;
 
-use bkndb_core::{BknError, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
+use bkndb_core::{BknError, KvIter, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 use redb::{Database, ReadTransaction, ReadableTable, TableError, WriteTransaction};
 
 /// Disk-backed storage engine used on desktop, mobile, and embedded Linux.
@@ -100,6 +100,24 @@ impl StorageReadTx for RedbReadTx<'_> {
             out.push((k.value().to_vec(), v.value().to_vec()));
         }
         Ok(out)
+    }
+
+    /// Streams straight from redb's B-tree cursor: a read transaction's
+    /// table handle is owned (`'static`), so the iterator needn't borrow it.
+    fn scan<'a>(&'a self, table: TableSpec, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Result<KvIter<'a>, BknError> {
+        let def = table_def(table);
+        let redb_table = match self.tx.open_table(def) {
+            Ok(t) => t,
+            Err(ref e) if is_missing_table(e) => return Ok(Box::new(std::iter::empty())),
+            Err(e) => return Err(BknError::Backend(e.to_string())),
+        };
+        let iter = redb_table
+            .range::<&[u8]>((start, end))
+            .map_err(|e| BknError::Backend(e.to_string()))?;
+        Ok(Box::new(iter.map(|entry| {
+            let (k, v) = entry.map_err(|e| BknError::Backend(e.to_string()))?;
+            Ok((k.value().to_vec(), v.value().to_vec()))
+        })))
     }
 }
 

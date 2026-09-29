@@ -504,12 +504,11 @@ mod phase2 {
         assert_eq!(db.degree(a, FfiDirection::Out, None).unwrap(), 0);
 
         let batch = FfiSyncBatch {
-            nodes: vec![],
-            edges: vec![],
             rows: vec![FfiTableRows {
                 table: "people".into(),
                 rows: vec![row(&[("id", FfiPropValue::Int(1)), ("email", s("a@x")), ("city", s("Bogor"))])],
             }],
+            ..Default::default()
         };
         let res = db.sync_batch(batch.clone()).unwrap();
         assert_eq!(res.row_pks, vec![vec![FfiPropValue::Int(1)]]);
@@ -517,5 +516,273 @@ mod phase2 {
         let r = db.get_row("people".into(), FfiPropValue::Int(1)).unwrap().unwrap();
         assert_eq!(r.values.get("city"), Some(&s("Bogor")));
         assert_eq!(db.count("people".into(), FfiQuery::default()).unwrap(), 3);
+    }
+}
+
+mod phase3 {
+    use std::collections::HashMap;
+
+    use bkndb_ffi::{
+        BknDbEngine, FfiBknError, FfiDirection, FfiLinkedEdgeInput, FfiNodeInput, FfiNodeRef, FfiPropValue,
+        FfiPropertyIndex, FfiSyncBatch,
+    };
+
+    fn props(pairs: &[(&str, FfiPropValue)]) -> HashMap<String, FfiPropValue> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
+    #[test]
+    fn label_and_property_indexes() {
+        let db = BknDbEngine::in_memory().unwrap();
+        let a = db.create_node("Person".into(), props(&[("age", FfiPropValue::Int(30))])).unwrap();
+        let b = db.create_node("Person".into(), props(&[("age", FfiPropValue::Int(40))])).unwrap();
+        db.create_node("City".into(), HashMap::new()).unwrap();
+
+        assert_eq!(db.nodes_by_label("Person".into()).unwrap(), vec![a, b]);
+        assert_eq!(db.count_nodes("City".into()).unwrap(), 1);
+        assert_eq!(db.find_nodes("Person".into(), "age".into(), FfiPropValue::Int(40)).unwrap(), vec![b]);
+
+        assert!(db.create_node_index("Person".into(), "age".into()).unwrap());
+        assert_eq!(
+            db.list_node_indexes().unwrap(),
+            vec![FfiPropertyIndex { label: "Person".into(), property: "age".into() }]
+        );
+        db.update_node_properties(a, props(&[("age", FfiPropValue::Int(40))]), vec![]).unwrap();
+        assert_eq!(db.find_nodes("Person".into(), "age".into(), FfiPropValue::Int(40)).unwrap(), vec![a, b]);
+
+        let tx = db.begin_transaction().unwrap();
+        let c = tx.create_node("Person".into(), props(&[("age", FfiPropValue::Int(40))])).unwrap();
+        assert_eq!(tx.find_nodes("Person".into(), "age".into(), FfiPropValue::Int(40)).unwrap(), vec![a, b, c]);
+        assert_eq!(tx.nodes_by_label("Person".into()).unwrap().len(), 3);
+        tx.rollback().unwrap();
+
+        db.rebuild_graph_indexes().unwrap();
+        assert!(db.drop_node_index("Person".into(), "age".into()).unwrap());
+        assert!(db.list_node_indexes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn weighted_paths() {
+        let db = BknDbEngine::in_memory().unwrap();
+        let n: Vec<u64> = (0..3).map(|_| db.create_node("N".into(), HashMap::new()).unwrap()).collect();
+        let w = |v: f64| props(&[("km", FfiPropValue::Float(v))]);
+        db.create_edge(n[0], "R".into(), n[1], w(1.0)).unwrap();
+        db.create_edge(n[1], "R".into(), n[2], w(1.0)).unwrap();
+        db.create_edge(n[0], "R".into(), n[2], w(9.0)).unwrap();
+        let best = db
+            .find_weighted_path(n[0], n[2], FfiDirection::Out, None, "km".into(), 1.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(best.cost, 2.0);
+        assert_eq!(best.path.node_ids, n);
+        let bad = db.find_weighted_path(n[0], n[2], FfiDirection::Out, None, "km".into(), -1.0);
+        assert!(matches!(bad, Err(FfiBknError::Encoding { .. })));
+    }
+
+    #[test]
+    fn sync_batch_linked_edges() {
+        let db = BknDbEngine::in_memory().unwrap();
+        let repo = db.create_node("Repo".into(), HashMap::new()).unwrap();
+        let batch = FfiSyncBatch {
+            nodes: vec![
+                FfiNodeInput { label: "File".into(), properties: HashMap::new() },
+                FfiNodeInput { label: "Fn".into(), properties: HashMap::new() },
+            ],
+            edges: vec![],
+            rows: vec![],
+            linked_edges: vec![
+                FfiLinkedEdgeInput {
+                    from: FfiNodeRef::Existing { id: repo },
+                    edge_type: "CONTAINS".into(),
+                    to: FfiNodeRef::New { index: 0 },
+                    properties: HashMap::new(),
+                },
+                FfiLinkedEdgeInput {
+                    from: FfiNodeRef::New { index: 0 },
+                    edge_type: "DEFINES".into(),
+                    to: FfiNodeRef::New { index: 1 },
+                    properties: HashMap::new(),
+                },
+            ],
+        };
+        let res = db.sync_batch(batch.clone()).unwrap();
+        assert_eq!(res.edge_ids.len(), 2);
+        let hits = db.traverse(repo, FfiDirection::Out, 5, None, None).unwrap();
+        assert_eq!(hits.iter().map(|h| h.node_id).collect::<Vec<_>>(), vec![repo, res.node_ids[0], res.node_ids[1]]);
+
+        let mut bad = batch;
+        bad.linked_edges[1].to = FfiNodeRef::New { index: 7 };
+        assert!(db.sync_batch(bad).is_err());
+        assert_eq!(db.count_nodes("File".into()).unwrap(), 1, "failed batch rolled back");
+    }
+}
+
+mod phase4 {
+    use std::collections::HashMap;
+
+    use bkndb_ffi::{
+        BknDbEngine, FfiBknError, FfiColumn, FfiColumnKind, FfiLsmOptions, FfiPropValue, FfiTableCount, FfiTableSchema,
+    };
+
+    fn items_schema() -> FfiTableSchema {
+        FfiTableSchema {
+            name: "items".into(),
+            columns: vec![
+                FfiColumn { name: "id".into(), kind: FfiColumnKind::Int, nullable: true, unique: false, default_value: None },
+                FfiColumn { name: "name".into(), kind: FfiColumnKind::Str, nullable: true, unique: false, default_value: None },
+            ],
+            primary_key: "id".into(),
+            auto_increment: true,
+            indexed_columns: vec![],
+        }
+    }
+
+    fn seed(db: &BknDbEngine, rows: usize) {
+        db.create_table(items_schema()).unwrap();
+        let rows = (0..rows)
+            .map(|i| HashMap::from([("name".to_string(), FfiPropValue::Str(format!("item-{i}")))]))
+            .collect();
+        db.insert_many("items".into(), rows).unwrap();
+        let a = db.create_node("N".into(), HashMap::new()).unwrap();
+        let b = db.create_node("N".into(), HashMap::new()).unwrap();
+        db.create_edge(a, "E".into(), b, HashMap::new()).unwrap();
+    }
+
+    #[test]
+    fn stats_backup_and_verify_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let opts = FfiLsmOptions {
+            memtable_flush_bytes: 4096,
+            compaction_trigger_files: 50,
+            block_size_bytes: Some(512),
+            compression: Some(true),
+        };
+        let db = BknDbEngine::open_with_options(dir.path().join("a.bkndb").to_string_lossy().into(), opts).unwrap();
+        seed(&db, 300);
+
+        let stats = db.stats().unwrap();
+        assert_eq!((stats.nodes, stats.edges), (2, 1));
+        assert_eq!(stats.tables, vec![FfiTableCount { table: "items".into(), rows: 300 }]);
+        let storage = stats.storage.expect("on-disk databases report storage figures");
+        assert!(storage.file_bytes > 0 && storage.sstable_count >= 1);
+
+        let report = db.verify_integrity().unwrap();
+        assert!(report.blocks_verified > 0);
+
+        // Backup works while a transaction is open, and doesn't include it.
+        let tx = db.begin_transaction().unwrap();
+        tx.insert("items".into(), HashMap::from([("name".to_string(), FfiPropValue::Str("pending".into()))])).unwrap();
+        let backup = dir.path().join("b.bkndb").to_string_lossy().to_string();
+        db.backup(backup.clone()).unwrap();
+        tx.commit().unwrap();
+        assert!(matches!(db.backup(backup.clone()), Err(FfiBknError::Backend { .. })), "never overwrites");
+
+        let copy = BknDbEngine::open(backup).unwrap();
+        let copy_stats = copy.stats().unwrap();
+        assert_eq!(copy_stats.tables[0].rows, 300);
+        assert_eq!(copy_stats.storage.unwrap().reclaimable_bytes, 0);
+        assert_eq!(db.stats().unwrap().tables[0].rows, 301);
+    }
+
+    #[test]
+    fn in_memory_databases_report_what_applies() {
+        let db = BknDbEngine::in_memory().unwrap();
+        seed(&db, 3);
+        let stats = db.stats().unwrap();
+        assert_eq!(stats.tables[0].rows, 3);
+        assert!(stats.storage.is_none());
+        assert_eq!(db.verify_integrity().unwrap().sstables_checked, 0);
+        assert!(matches!(db.backup("x.bkndb".into()), Err(FfiBknError::InvalidArgument { .. })));
+        db.close().unwrap();
+        assert!(matches!(db.stats(), Err(FfiBknError::DatabaseClosed)));
+    }
+}
+
+mod phase5 {
+    use std::collections::HashMap;
+
+    use bkndb_ffi::{BknDbEngine, FfiBknError, FfiPropValue};
+
+    #[test]
+    fn new_value_kinds_round_trip() {
+        let db = BknDbEngine::in_memory().unwrap();
+        let nested = FfiPropValue::Map(HashMap::from([(
+            "tags".to_string(),
+            FfiPropValue::List(vec![FfiPropValue::Str("a".into()), FfiPropValue::Timestamp(-5)]),
+        )]));
+        let props = HashMap::from([
+            ("at".to_string(), FfiPropValue::Timestamp(1_700_000_000_000_000)),
+            ("id".to_string(), FfiPropValue::Uuid { hi: u64::MAX, lo: 7 }),
+            ("doc".to_string(), nested),
+        ]);
+        let n = db.create_node("Doc".into(), props.clone()).unwrap();
+        assert_eq!(db.get_node(n).unwrap().unwrap().properties, props);
+    }
+
+    #[test]
+    fn sql_and_graph_queries() {
+        let db = BknDbEngine::in_memory().unwrap();
+        db.sql("CREATE TABLE t (id INT PRIMARY KEY AUTOINCREMENT, name TEXT, at TIMESTAMP)".into(), vec![], None).unwrap();
+        let ins = db
+            .sql(
+                "INSERT INTO t (name, at) VALUES (?, :at), ('b', NULL)".into(),
+                vec![FfiPropValue::Str("a".into())],
+                Some(HashMap::from([("at".to_string(), FfiPropValue::Timestamp(10))])),
+            )
+            .unwrap();
+        assert_eq!(ins.affected, 2);
+        let sel = db.sql("SELECT name, at FROM t ORDER BY id".into(), vec![], None).unwrap();
+        assert_eq!(sel.columns, vec!["name", "at"]);
+        assert_eq!(sel.rows[0], vec![FfiPropValue::Str("a".into()), FfiPropValue::Timestamp(10)]);
+        assert!(matches!(db.sql("SELEKT".into(), vec![], None), Err(FfiBknError::InvalidQuery { .. })));
+
+        let a = db.create_node("P".into(), HashMap::from([("n".to_string(), FfiPropValue::Str("a".into()))])).unwrap();
+        let b = db.create_node("P".into(), HashMap::from([("n".to_string(), FfiPropValue::Str("b".into()))])).unwrap();
+        db.create_edge(a, "R".into(), b, HashMap::new()).unwrap();
+        let g = db
+            .graph_query(
+                "MATCH (x:P {n: $n})-[:R]->(y) RETURN y.n".into(),
+                vec![],
+                Some(HashMap::from([("n".to_string(), FfiPropValue::Str("a".into()))])),
+            )
+            .unwrap();
+        assert_eq!(g.rows, vec![vec![FfiPropValue::Str("b".into())]]);
+
+        // In a transaction: sees its own writes; a SQL error aborts it.
+        let tx = db.begin_transaction().unwrap();
+        tx.sql("INSERT INTO t (name) VALUES ('c')".into(), vec![], None).unwrap();
+        assert_eq!(tx.sql("SELECT COUNT(*) FROM t".into(), vec![], None).unwrap().rows, vec![vec![FfiPropValue::Int(3)]]);
+        assert!(tx.graph_query("MATCH (x) RETURN count(*)".into(), vec![], None).is_ok());
+        tx.rollback().unwrap();
+        assert_eq!(db.sql("SELECT COUNT(*) FROM t".into(), vec![], None).unwrap().rows, vec![vec![FfiPropValue::Int(2)]]);
+    }
+
+    #[test]
+    fn fulltext_and_vector_search() {
+        use bkndb_ffi::{FfiExprNode, FfiExprOp, FfiVectorMetric};
+        let db = BknDbEngine::in_memory().unwrap();
+        db.sql("CREATE TABLE d (id INT PRIMARY KEY, body TEXT, lang TEXT, emb LIST)".into(), vec![], None).unwrap();
+        for (id, body, lang, emb) in [(1, "graph database engine", "en", [1.0, 0.0]), (2, "basis data graf", "id", [0.0, 1.0]), (3, "graph of graphs", "en", [0.6, 0.8])] {
+            db.sql(
+                "INSERT INTO d VALUES (?, ?, ?, ?)".into(),
+                vec![
+                    FfiPropValue::Int(id),
+                    FfiPropValue::Str(body.into()),
+                    FfiPropValue::Str(lang.into()),
+                    FfiPropValue::List(emb.iter().map(|x| FfiPropValue::Float(*x)).collect()),
+                ],
+                None,
+            )
+            .unwrap();
+        }
+        assert!(db.create_fulltext_index("d".into(), "body".into()).unwrap());
+        assert_eq!(db.list_fulltext_indexes("d".into()).unwrap(), vec!["body"]);
+        let hits = db.search_text("d".into(), "body".into(), "graph*".into(), 10, false, vec![]).unwrap();
+        assert_eq!(hits.iter().map(|h| h.row.pk.clone()).collect::<Vec<_>>(), vec![FfiPropValue::Int(3), FfiPropValue::Int(1)]);
+        let en_only = vec![FfiExprNode { op: FfiExprOp::Eq, column: Some("lang".into()), values: vec![FfiPropValue::Str("id".into())], children: vec![] }];
+        let near = db.search_vector("d".into(), "emb".into(), vec![0.0, 1.0], 1, FfiVectorMetric::Cosine, en_only).unwrap();
+        assert_eq!(near[0].row.pk, FfiPropValue::Int(2));
+        assert!((near[0].score - 1.0).abs() < 1e-6);
+        assert!(db.drop_fulltext_index("d".into(), "body".into()).unwrap());
     }
 }

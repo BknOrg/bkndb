@@ -60,3 +60,21 @@ fn uncommitted_write_tx_leaves_no_trace() {
         "put from the uncommitted tx must not persist"
     );
 }
+
+#[test]
+fn redb_backend_satisfies_graph_index_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::graph_index_suite(RedbStorageBackend::open(dir.path().join("gidx.redb")).unwrap());
+}
+
+#[test]
+fn redb_backend_satisfies_graph_weighted_path_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::graph_weighted_path_suite(RedbStorageBackend::open(dir.path().join("gwp.redb")).unwrap());
+}
+
+#[test]
+fn redb_backend_satisfies_sync_batch_linked_edges_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    bkndb_core::test_util::sync_batch_linked_edges_suite(RedbStorageBackend::open(dir.path().join("glink.redb")).unwrap());
+}

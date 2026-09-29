@@ -20,4 +20,6 @@ serde = ["dep:serde"]
 value = ["dep:serde", "dep:bincode"]
 graph = ["value"]
 relational = ["value"]
+# Full-text (BM25) and exact vector search over relational tables.
+search = ["relational"]
 test-util = []

@@ -4,6 +4,7 @@
 
 pub mod engine;
 pub mod error;
+mod lang;
 mod ops;
 pub mod relational;
 pub mod transaction;
