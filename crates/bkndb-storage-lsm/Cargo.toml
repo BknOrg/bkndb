@@ -9,7 +9,7 @@ description = "Native single-file LSM-tree storage engine with mmap zero-copy fo
 readme = "README.md"
 
 [dependencies]
-bkndb-core = { version = "0.2.0", path = "../bkndb-core" }
+bkndb-core = { version = "0.2.1", path = "../bkndb-core" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
 crc32fast = { workspace = true }

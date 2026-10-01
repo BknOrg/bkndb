@@ -9,10 +9,10 @@ description = "Embedded hybrid graph-relational database engine with ACID transa
 readme = "README.md"
 
 [dependencies]
-bkndb-core = { version = "0.2.0", path = "../bkndb-core" }
-bkndb-storage-redb = { version = "0.2.0", path = "../bkndb-storage-redb", optional = true }
-bkndb-storage-mem = { version = "0.2.0", path = "../bkndb-storage-mem", optional = true }
-bkndb-storage-lsm = { version = "0.2.0", path = "../bkndb-storage-lsm", optional = true }
+bkndb-core = { version = "0.2.1", path = "../bkndb-core" }
+bkndb-storage-redb = { version = "0.2.1", path = "../bkndb-storage-redb", optional = true }
+bkndb-storage-mem = { version = "0.2.1", path = "../bkndb-storage-mem", optional = true }
+bkndb-storage-lsm = { version = "0.2.1", path = "../bkndb-storage-lsm", optional = true }
 
 [features]
 default = ["lsm-backend", "mem-backend", "graph", "relational-layer", "search"]

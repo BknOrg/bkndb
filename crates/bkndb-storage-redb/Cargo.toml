@@ -9,7 +9,7 @@ description = "Redb-backed storage engine backend for BknDb"
 readme = "README.md"
 
 [dependencies]
-bkndb-core = { version = "0.2.0", path = "../bkndb-core" }
+bkndb-core = { version = "0.2.1", path = "../bkndb-core" }
 redb = { workspace = true }
 
 [dev-dependencies]

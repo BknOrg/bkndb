@@ -99,7 +99,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
 name = "bkndb"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bkndb-core",
  "bkndb-storage-lsm",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "bkndb-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bincode",
  "serde",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "bkndb-ffi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bkndb",
  "bkndb-core",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "bkndb-storage-lsm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bincode",
  "bkndb-core",
@@ -142,14 +142,14 @@ dependencies = [
 
 [[package]]
 name = "bkndb-storage-mem"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bkndb-core",
 ]
 
 [[package]]
 name = "bkndb-storage-redb"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bkndb-core",
  "redb",
