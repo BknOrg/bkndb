@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Native single-file LSM-tree storage engine with mmap zero-copy for BknDb"
+readme = "README.md"
 
 [dependencies]
 bkndb-core = { version = "0.2.0", path = "../bkndb-core" }
