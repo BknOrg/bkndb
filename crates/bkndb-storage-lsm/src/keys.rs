@@ -12,7 +12,7 @@ use bkndb_core::TableSpec;
 
 pub fn encode_key(table: TableSpec, user_key: &[u8]) -> Vec<u8> {
     let name = table.0.as_bytes();
-    debug_assert!(name.len() <= u8::MAX as usize, "table name too long");
+    assert!(name.len() <= u8::MAX as usize, "table name too long");
     let mut out = Vec::with_capacity(1 + name.len() + user_key.len());
     out.push(name.len() as u8);
     out.extend_from_slice(name);
@@ -24,6 +24,7 @@ pub fn encode_key(table: TableSpec, user_key: &[u8]) -> Vec<u8> {
 /// bound for an unbounded ("whole table") scan.
 pub fn table_prefix(table: TableSpec) -> Vec<u8> {
     let name = table.0.as_bytes();
+    assert!(name.len() <= u8::MAX as usize, "table name too long");
     let mut out = Vec::with_capacity(1 + name.len());
     out.push(name.len() as u8);
     out.extend_from_slice(name);

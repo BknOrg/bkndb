@@ -1,46 +1,60 @@
 pub use bkndb_core::*;
 
-#[cfg(feature = "lsm-backend")]
-pub use bkndb_storage_lsm::{IntegrityReport, LsmOptions, LsmStats, LsmStorageBackend};
-
 #[cfg(feature = "redb-backend")]
-pub use bkndb_storage_redb::RedbStorageBackend;
+pub use bkndb_storage_redb::{IntegrityReport, RedbStats, RedbStorageBackend};
+
+#[cfg(feature = "lsm-backend")]
+pub use bkndb_storage_lsm::{
+    IntegrityReport as LsmIntegrityReport, LsmOptions, LsmStats, LsmStorageBackend,
+};
+
+#[cfg(all(not(feature = "redb-backend"), feature = "lsm-backend"))]
+pub use bkndb_storage_lsm::IntegrityReport;
 
 #[cfg(feature = "mem-backend")]
 pub use bkndb_storage_mem::MemoryStorageBackend;
 
 use std::path::Path;
 
-/// The primary user-facing database handle for BknDb, backed by the native
-/// [`LsmStorageBackend`] for high-performance single-file on-disk persistence (.bkndb).
-#[cfg(feature = "lsm-backend")]
+/// The primary user-facing database handle for BknDb, backed by
+/// [`RedbStorageBackend`] for single-file ACID on-disk persistence (`.bkndb`).
+#[cfg(feature = "redb-backend")]
 #[derive(Clone)]
 pub struct BknDb {
-    inner: Db<LsmStorageBackend>,
+    inner: Db<RedbStorageBackend>,
 }
 
-#[cfg(feature = "lsm-backend")]
+#[cfg(feature = "redb-backend")]
 impl BknDb {
-    /// Opens or creates a single-file native BknDb database (`.bkndb`) at `path`.
+    /// Opens or creates a single-file BknDb database (`.bkndb`) at `path`
+    /// backed by [`RedbStorageBackend`].
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, BknError> {
-        let backend = LsmStorageBackend::open(path)?;
-        Ok(Self {
-            inner: Db::new(backend),
-        })
-    }
-
-    /// Opens or creates a single-file native BknDb database with custom LSM options.
-    pub fn open_with_options<P: AsRef<Path>>(path: P, options: LsmOptions) -> Result<Self, BknError> {
-        let backend = LsmStorageBackend::open_with_options(path, options)?;
-        Ok(Self {
-            inner: Db::new(backend),
-        })
-    }
-
-    /// Opens or creates an alternative on-disk database backed by Redb.
-    #[cfg(feature = "redb-backend")]
-    pub fn open_redb<P: AsRef<Path>>(path: P) -> Result<Db<RedbStorageBackend>, BknError> {
         let backend = RedbStorageBackend::open(path)?;
+        Ok(Self {
+            inner: Db::new(backend),
+        })
+    }
+
+    /// Compatibility alias for [`BknDb::open`] backed by [`RedbStorageBackend`].
+    pub fn open_redb<P: AsRef<Path>>(path: P) -> Result<Self, BknError> {
+        Self::open(path)
+    }
+
+    /// Opens or creates an on-disk database backed by [`LsmStorageBackend`].
+    #[cfg(feature = "lsm-backend")]
+    pub fn open_lsm<P: AsRef<Path>>(path: P) -> Result<Db<LsmStorageBackend>, BknError> {
+        let backend = LsmStorageBackend::open(path)?;
+        Ok(Db::new(backend))
+    }
+
+    /// Opens or creates an on-disk database backed by [`LsmStorageBackend`]
+    /// with custom [`LsmOptions`].
+    #[cfg(feature = "lsm-backend")]
+    pub fn open_lsm_with_options<P: AsRef<Path>>(
+        path: P,
+        options: LsmOptions,
+    ) -> Result<Db<LsmStorageBackend>, BknError> {
+        let backend = LsmStorageBackend::open_with_options(path, options)?;
         Ok(Db::new(backend))
     }
 
@@ -50,32 +64,30 @@ impl BknDb {
         Db::new(MemoryStorageBackend::new())
     }
 
-    /// Access the underlying [`Db<LsmStorageBackend>`].
-    pub fn inner(&self) -> &Db<LsmStorageBackend> {
+    /// Access the underlying [`Db<RedbStorageBackend>`].
+    pub fn inner(&self) -> &Db<RedbStorageBackend> {
         &self.inner
     }
 
-    /// Merges every on-disk SSTable into one and reclaims dead space
-    /// (overwritten/deleted data and old log regions). Blocks writers while
-    /// it runs; readers are unaffected.
+    /// Compacts the on-disk database and reclaims free space.
     pub fn compact(&self) -> Result<(), BknError> {
         self.inner.backend().force_compact()
     }
 
-    /// Writes a consistent, compacted copy of everything committed so far to
+    /// Writes a consistent snapshot copy of everything committed so far to
     /// a new `.bkndb` file at `dest` (which must not exist yet), while the
     /// database stays open for reads and writes.
     pub fn backup_to<P: AsRef<Path>>(&self, dest: P) -> Result<(), BknError> {
         self.inner.backend().backup_to(dest)
     }
 
-    /// File-level size figures (file size, SSTables, WAL, reclaimable
-    /// space). For logical counts (nodes, edges, rows) see [`Db::stats`].
-    pub fn storage_stats(&self) -> Result<LsmStats, BknError> {
+    /// File-level and table storage statistics. For logical counts (nodes,
+    /// edges, rows) see [`Db::stats`].
+    pub fn storage_stats(&self) -> Result<RedbStats, BknError> {
         self.inner.backend().stats()
     }
 
-    /// Re-reads and checksums every stored byte; returns
+    /// Verifies database integrity and scans all tables/entries; returns
     /// [`BknError::Corruption`] if anything is damaged.
     pub fn verify_integrity(&self) -> Result<IntegrityReport, BknError> {
         self.inner.backend().verify_integrity()
@@ -112,29 +124,56 @@ impl BknDb {
     }
 }
 
-#[cfg(feature = "lsm-backend")]
+#[cfg(feature = "redb-backend")]
 impl std::ops::Deref for BknDb {
-    type Target = Db<LsmStorageBackend>;
+    type Target = Db<RedbStorageBackend>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-/// Fallback BknDb when lsm-backend is disabled but redb-backend is enabled.
-#[cfg(all(not(feature = "lsm-backend"), feature = "redb-backend"))]
-#[derive(Clone)]
-pub struct BknDb {
-    inner: Db<RedbStorageBackend>,
+#[cfg(feature = "redb-backend")]
+impl std::ops::DerefMut for BknDb {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
 }
 
-#[cfg(all(not(feature = "lsm-backend"), feature = "redb-backend"))]
+/// Fallback BknDb when redb-backend is disabled but lsm-backend is enabled.
+#[cfg(all(not(feature = "redb-backend"), feature = "lsm-backend"))]
+#[derive(Clone)]
+pub struct BknDb {
+    inner: Db<LsmStorageBackend>,
+}
+
+#[cfg(all(not(feature = "redb-backend"), feature = "lsm-backend"))]
 impl BknDb {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, BknError> {
-        let backend = RedbStorageBackend::open(path)?;
+        let backend = LsmStorageBackend::open(path)?;
         Ok(Self {
             inner: Db::new(backend),
         })
+    }
+
+    pub fn open_with_options<P: AsRef<Path>>(path: P, options: LsmOptions) -> Result<Self, BknError> {
+        let backend = LsmStorageBackend::open_with_options(path, options)?;
+        Ok(Self {
+            inner: Db::new(backend),
+        })
+    }
+
+    pub fn open_lsm<P: AsRef<Path>>(path: P) -> Result<Db<LsmStorageBackend>, BknError> {
+        let backend = LsmStorageBackend::open(path)?;
+        Ok(Db::new(backend))
+    }
+
+    pub fn open_lsm_with_options<P: AsRef<Path>>(
+        path: P,
+        options: LsmOptions,
+    ) -> Result<Db<LsmStorageBackend>, BknError> {
+        let backend = LsmStorageBackend::open_with_options(path, options)?;
+        Ok(Db::new(backend))
     }
 
     #[cfg(feature = "mem-backend")]
@@ -142,8 +181,24 @@ impl BknDb {
         Db::new(MemoryStorageBackend::new())
     }
 
-    pub fn inner(&self) -> &Db<RedbStorageBackend> {
+    pub fn inner(&self) -> &Db<LsmStorageBackend> {
         &self.inner
+    }
+
+    pub fn compact(&self) -> Result<(), BknError> {
+        self.inner.backend().force_compact()
+    }
+
+    pub fn backup_to<P: AsRef<Path>>(&self, dest: P) -> Result<(), BknError> {
+        self.inner.backend().backup_to(dest)
+    }
+
+    pub fn storage_stats(&self) -> Result<LsmStats, BknError> {
+        self.inner.backend().stats()
+    }
+
+    pub fn verify_integrity(&self) -> Result<IntegrityReport, BknError> {
+        self.inner.backend().verify_integrity()
     }
 
     #[cfg(all(feature = "graph", feature = "relational-layer"))]
@@ -171,12 +226,19 @@ impl BknDb {
     }
 }
 
-#[cfg(all(not(feature = "lsm-backend"), feature = "redb-backend"))]
+#[cfg(all(not(feature = "redb-backend"), feature = "lsm-backend"))]
 impl std::ops::Deref for BknDb {
-    type Target = Db<RedbStorageBackend>;
+    type Target = Db<LsmStorageBackend>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+#[cfg(all(not(feature = "redb-backend"), feature = "lsm-backend"))]
+impl std::ops::DerefMut for BknDb {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 

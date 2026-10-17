@@ -36,7 +36,7 @@ This document is the comprehensive guide and complete API reference for the `bkn
 
 ## 1. What is bkndb and When to Use It
 
-`bkndb` is an **embedded hybrid graph + relational + vector database** engine. It runs entirely inside your Python application process (like SQLite), requires zero external daemon or server setup, and persists all data into a **single `.bkndb` file**. The underlying core engine is written in pure Rust for high speed and memory safety.
+`bkndb` is an **embedded hybrid graph + relational + vector database** engine. It runs entirely inside your Python application process (like SQLite), requires zero external daemon or server setup, and persists all data into a **single `.bkndb` file** using an embedded Redb storage engine (with pure Rust ACID B-tree persistence). The underlying core engine is written in pure Rust for high speed and memory safety.
 
 In a single database instance, you get:
 
@@ -127,7 +127,7 @@ with bkndb.open("quickstart.bkndb") as db: # or bkndb.in_memory()
 ```python
 import bkndb
 
-# 1. Persistent single-file database
+# 1. Persistent single-file database (backed by Redb by default)
 db = bkndb.open("my_data.bkndb")
 
 # Close and release file locks
@@ -139,10 +139,10 @@ with bkndb.open("my_data.bkndb") as db:
     # Operations
     pass
 
-# 3. Tuning options
+# 3. Tuning options (LSM compatibility options are safely accepted)
 with bkndb.open(
-    "tuned.bkndb",
-    memtable_flush_bytes=32 * 1024 * 1024, # 32MB MemTable buffer
+    "app.bkndb",
+    memtable_flush_bytes=32 * 1024 * 1024, # Accepted for compatibility
     compaction_trigger_files=8,
 ) as db:
     pass
@@ -450,18 +450,21 @@ for r in results:
 
 ```python
 with bkndb.open("production.bkndb") as db:
-    # 1. Reclaim deleted space
+    # 1. Reclaim deleted space via B-tree compaction
     db.compact()
 
-    # 2. Hot Online Backup
+    # 2. Hot Online Backup (consistent snapshot copy to destination)
     db.backup("backups/snapshot_daily.bkndb")
 
     # 3. Integrity Check
     db.verify_integrity()
 
-    # 4. Storage Metrics
+    # 4. Storage Metrics (Redb engine metrics)
     stats = db.stats()
-    print("Storage Stats:", stats.storage.file_size, stats.storage.reclaimable_bytes)
+    st = stats.storage
+    print(f"File size: {st.file_bytes} bytes, Active tables: {st.sstable_count}")
+    print(f"Stored bytes: {st.sstable_bytes}, Stored entries: {st.sstable_entries}")
+    print(f"Reclaimable space: {st.reclaimable_bytes} bytes")
 ```
 
 ---

@@ -34,7 +34,7 @@ This document is the comprehensive guide and API reference for the `bkndb` Rust 
 
 ## 1. What is bkndb and When to Use It
 
-`bkndb` is an **embedded hybrid graph + relational + vector database** written in pure Rust. It runs completely inside your application process (zero network overhead, zero background daemon), persisting all data into a **single `.bkndb` container file** via an append-only LSM tree engine.
+`bkndb` is an **embedded hybrid graph + relational + vector database** written in pure Rust. It runs completely inside your application process (zero network overhead, zero background daemon), persisting all data into a **single `.bkndb` container file** via battle-tested Redb storage engine (with an optional LSM-tree engine).
 
 | Model | Purpose | Primary APIs |
 | :--- | :--- | :--- |
@@ -73,12 +73,12 @@ bkndb = "0.2"
 
 | Feature | Default | Description |
 | :--- | :---: | :--- |
-| `lsm-backend` | **Yes** | Native single-file `.bkndb` container (`LsmStorageBackend`) + `BknDb` handle. |
+| `redb-backend` | **Yes** | Default robust single-file storage backend (`RedbStorageBackend`) + `BknDb` handle. |
 | `mem-backend` | **Yes** | In-memory storage backend (`MemoryStorageBackend`, `BknDb::in_memory()`). |
 | `graph` | **Yes** | Property graph layer (`bkndb::graph`) and `MATCH` parser. |
 | `relational-layer` | **Yes** | Relational tables (`bkndb::relational`) and SQL parser. |
 | `search` | **Yes** | BM25 full-text and HNSW vector search (requires `relational-layer`). |
-| `redb-backend` | No | Alternative storage backend powered by `redb` (`BknDb::open_redb`). |
+| `lsm-backend` | No | Optional LSM-tree storage backend (`LsmStorageBackend`, `BknDb::open_lsm`). |
 
 All core modules are re-exported at the crate root (`pub use bkndb_core::*`), including `bkndb::graph`, `bkndb::relational`, `bkndb::value`, `bkndb::lang`, `bkndb::kv`, `bkndb::hybrid`, and `bkndb::db`.
 
@@ -87,7 +87,7 @@ All core modules are re-exported at the crate root (`pub use bkndb_core::*`), in
 ## 3. Architecture and Core Types
 
 ```
-BknDb  ──Deref──▶  Db<LsmStorageBackend>
+BknDb  ──Deref──▶  Db<RedbStorageBackend>
                      ├── .graph()       -> GraphDb<B>        (node, edge, traversal, MATCH)
                      ├── .relational()  -> RelationalDb<B>   (catalog, tables, SQL, search)
                      ├── .kv()          -> Kv<B>             (raw bytes)
@@ -97,14 +97,14 @@ BknDb  ──Deref──▶  Db<LsmStorageBackend>
                      └── .stats()                            (storage metrics)
 ```
 
-- **`BknDb`**: The primary entry point for persistent on-disk databases. It wraps `Db<LsmStorageBackend>` (via `Deref`) and adds file-level maintenance methods: `compact`, `backup_to`, `storage_stats`, `verify_integrity`.
+- **`BknDb`**: The primary entry point for persistent on-disk databases. It wraps `Db<RedbStorageBackend>` (via `Deref`) and adds file-level maintenance methods: `compact`, `backup_to`, `storage_stats`, `verify_integrity`.
 - **`Db<B>`**: Generic over any storage backend `B: StorageEngine`. Cheap to clone (internally backed by `Arc`). `BknDb::in_memory()` returns `Db<MemoryStorageBackend>`.
 - **`GraphDb`, `RelationalDb`, `Kv`**: Model-specific facades sharing the same backend. Non-transactional calls automatically open and commit their own transactions.
 
 ### Concurrency Guarantees
 - **Single Writer**: Only one write transaction executes at any time. `begin_write()` waits for active writers to finish.
 - **Concurrent Readers**: Reads execute on consistent snapshots without being blocked by writers.
-- **Durable Commits**: In LSM mode, commits are `fsync`'d to the Write-Ahead Log before returning `Ok`.
+- **Durable Commits**: Commits are safely synced to disk before returning `Ok`.
 - **Rollback**: Dropping a write transaction without calling commit automatically rolls back all changes.
 
 ---
@@ -180,22 +180,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 5. Opening a Database
 
 ```rust
-use bkndb::{BknDb, BknError, LsmOptions};
+use bkndb::{BknDb, BknError};
 
-// 1. Default persistent single-file (.bkndb)
+// 1. Default persistent single-file database (backed by Redb)
 let db = BknDb::open("data/app.bkndb")?;
+
+// open_redb is an explicit alias
+let db_alias = BknDb::open_redb("data/app_redb.bkndb")?;
 
 // Opening the same file path while open returns an error
 assert!(matches!(BknDb::open("data/app.bkndb"), Err(BknError::DatabaseLocked(_))));
 drop(db); // Releases file lock
 
-// 2. Open with custom LSM options
-let tuned = BknDb::open_with_options("data/tuned.bkndb", LsmOptions {
-    memtable_flush_bytes: 32 * 1024 * 1024, // 32MB MemTable buffer
-    compaction_trigger_files: 8,
-    block_size: 4096,
-    ..Default::default()
-})?;
+// 2. Open optional LSM backend (when feature "lsm-backend" is enabled)
+#[cfg(feature = "lsm-backend")]
+{
+    use bkndb::LsmOptions;
+    let lsm_db = BknDb::open_lsm_with_options("data/lsm.bkndb", LsmOptions {
+        memtable_flush_bytes: 32 * 1024 * 1024, // 32MB MemTable buffer
+        compaction_trigger_files: 8,
+        block_size: 4096,
+        ..Default::default()
+    })?;
+    drop(lsm_db);
+}
 
 // 3. Ephemeral in-memory database
 let mem = BknDb::in_memory();
@@ -537,19 +545,22 @@ for hit in hits {
 ## 18. Operations: Backup, Stats, Integrity, Compaction
 
 ```rust
-// 1. Force SSTable Compaction to reclaim dead space
+// 1. Force Compaction to reclaim dead space
 db.compact()?;
 
-// 2. Online Hot Backup
+// 2. Online Hot Backup (consistent snapshot copy to destination)
 db.backup_to("backups/app_backup.bkndb")?;
 
-// 3. Storage Block CRC32 Checksum Verification
+// 3. Storage Integrity Check
 let report = db.verify_integrity()?;
 assert!(report.is_ok());
 
-// 4. File-Level Stats
+// 4. File-Level Stats (returns RedbStats by default, or LsmStats with lsm-backend)
 let stats = db.storage_stats()?;
-println!("File size: {} bytes, Reclaimable: {} bytes", stats.file_size, stats.reclaimable_bytes);
+println!(
+    "File size: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
+    stats.file_size, stats.table_count, stats.stored_bytes, stats.reclaimable_bytes
+);
 ```
 
 ---
@@ -561,11 +572,16 @@ Common error variants:
 - `BknError::DuplicateKey`: Primary key or unique constraint violation.
 - `BknError::DatabaseLocked`: Database file is already opened by another handle/process.
 - `BknError::SchemaViolation`: Missing required columns or incompatible data types.
-- `BknError::Corruption`: CRC32 checksum mismatch in WAL or SSTable blocks.
+- `BknError::Corruption`: Checksum mismatch or corrupted storage blocks.
 
 ---
 
 ## 20. Storage Backends and Custom Storage Guide
+
+`bkndb` ships with multiple built-in engines implementing the `StorageEngine` trait:
+- **Redb (`RedbStorageBackend`)**: Default on-disk engine, battle-tested ACID B-tree in a single file with fast point lookups and MVCC reads.
+- **Memory (`MemoryStorageBackend`)**: In-memory ephemeral engine, zero disk I/O, ideal for tests and ephemeral caches.
+- **LSM (`LsmStorageBackend`)**: Optional engine (`feature = "lsm-backend"`), single-file WAL + memtable + compressed SSTables.
 
 To implement a new backend, implement `StorageEngine`, `StorageReadTx`, and `StorageWriteTx`:
 
@@ -589,9 +605,12 @@ impl StorageEngine for CustomEngine {
 
 ```rust
 // Opening
-BknDb::open(path)?;
-BknDb::open_with_options(path, options)?;
-BknDb::in_memory();
+BknDb::open(path)?;                     // Default (Redb)
+BknDb::open_redb(path)?;                // Explicit alias
+BknDb::open_lsm(path)?;                 // feature "lsm-backend"
+BknDb::open_lsm_with_options(path, opt);// feature "lsm-backend"
+BknDb::in_memory();                     // In-memory
+```
 
 // Graph
 db.graph().create_node(label, props)?;

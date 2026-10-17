@@ -13,7 +13,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
 use bkndb::MemoryStorageBackend;
-use bkndb::LsmStorageBackend;
+use bkndb::RedbStorageBackend;
 use bkndb_core::relational::{Query, TableSchema};
 use bkndb_core::{BknError, Db, DbWriteBatch, StorageBackend};
 
@@ -118,7 +118,7 @@ impl<B: StorageBackend> Drop for Worker<B> {
 }
 
 pub(crate) enum TxWorker {
-    Disk(Worker<LsmStorageBackend>),
+    Disk(Worker<RedbStorageBackend>),
     Mem(Worker<MemoryStorageBackend>),
 }
 

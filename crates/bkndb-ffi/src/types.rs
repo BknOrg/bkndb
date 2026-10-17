@@ -307,17 +307,17 @@ pub struct FfiIntegrityReport {
     pub wal_records: u64,
 }
 
-impl From<bkndb::LsmStats> for FfiStorageStats {
-    fn from(s: bkndb::LsmStats) -> Self {
+impl From<bkndb::RedbStats> for FfiStorageStats {
+    fn from(s: bkndb::RedbStats) -> Self {
         Self {
             file_bytes: s.file_bytes,
-            sstable_count: s.sstable_count as u32,
-            legacy_sstable_count: s.legacy_sstable_count as u32,
-            sstable_bytes: s.sstable_bytes,
-            sstable_entries: s.sstable_entries,
-            memtable_entries: s.memtable_entries as u64,
-            memtable_bytes: s.memtable_bytes as u64,
-            wal_bytes: s.wal_bytes,
+            sstable_count: s.table_count as u32,
+            legacy_sstable_count: 0,
+            sstable_bytes: s.stored_bytes,
+            sstable_entries: s.entries,
+            memtable_entries: 0,
+            memtable_bytes: 0,
+            wal_bytes: 0,
             reclaimable_bytes: s.reclaimable_bytes,
         }
     }

@@ -156,7 +156,19 @@ pub fn read_manifest(file: &File, slot: &HeaderSlot) -> Result<Vec<u8>, BknError
 }
 
 pub fn read_blob(file: &File, offset: u64, len: u64) -> Result<Vec<u8>, BknError> {
-    let mut buf = vec![0u8; len as usize];
+    let file_len = file.metadata().map_err(io_err)?.len();
+    let end = offset.checked_add(len).ok_or_else(|| {
+        BknError::Corruption(format!("blob range overflow: offset={offset}, len={len}"))
+    })?;
+    if end > file_len {
+        return Err(BknError::Corruption(format!(
+            "blob extends past EOF: offset={offset}, len={len}, file_len={file_len}"
+        )));
+    }
+    let len_usize = usize::try_from(len).map_err(|_| {
+        BknError::Corruption(format!("blob length {len} exceeds address space"))
+    })?;
+    let mut buf = vec![0u8; len_usize];
     (&*file).seek(SeekFrom::Start(offset)).map_err(io_err)?;
     (&*file).read_exact(&mut buf).map_err(io_err)?;
     Ok(buf)
@@ -299,5 +311,17 @@ mod tests {
         write_blob_at(&file, BODY_START, b"hello world").unwrap();
         let read = read_blob(&file, BODY_START, 11).unwrap();
         assert_eq!(read, b"hello world");
+    }
+
+    #[test]
+    fn read_blob_rejects_length_past_eof_without_oom() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.bkndb");
+        let file = open_container_file(&path).unwrap();
+        write_blob_at(&file, BODY_START, b"short").unwrap();
+        assert!(matches!(
+            read_blob(&file, BODY_START, u64::MAX / 2),
+            Err(BknError::Corruption(_))
+        ));
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
-use bkndb::{LsmOptions, LsmStorageBackend, MemoryStorageBackend};
+use bkndb::{MemoryStorageBackend, RedbStorageBackend};
 use bkndb_core::graph::{Direction, EdgeId, NodeId};
 use bkndb_core::relational::{Agg, Query, TableSchema, VectorIndexOptions, VectorSearchOptions};
 use bkndb_core::Db;
@@ -22,7 +22,7 @@ use crate::types::{
 };
 
 enum Backend {
-    Disk(Db<LsmStorageBackend>),
+    Disk(Db<RedbStorageBackend>),
     Mem(Db<MemoryStorageBackend>),
 }
 
@@ -87,19 +87,14 @@ impl BknDbEngine {
     /// `DatabaseLocked` if another handle or process has it open.
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, FfiBknError> {
-        Ok(Self::wrap(Backend::Disk(Db::new(LsmStorageBackend::open(path)?))))
+        Ok(Self::wrap(Backend::Disk(Db::new(RedbStorageBackend::open(path)?))))
     }
 
-    /// Like [`BknDbEngine::open`], with tuning options for the storage engine.
+    /// Like [`BknDbEngine::open`], accepting [`FfiLsmOptions`] for backward
+    /// compatibility with generated multi-language bindings.
     #[uniffi::constructor]
-    pub fn open_with_options(path: String, options: FfiLsmOptions) -> Result<Arc<Self>, FfiBknError> {
-        let opts = LsmOptions {
-            memtable_flush_bytes: usize::try_from(options.memtable_flush_bytes).unwrap_or(usize::MAX),
-            compaction_trigger_files: options.compaction_trigger_files.max(2) as usize,
-            block_size_bytes: options.block_size_bytes.map_or(LsmOptions::default().block_size_bytes, |b| b.max(64) as usize),
-            compression: options.compression.unwrap_or(true),
-        };
-        Ok(Self::wrap(Backend::Disk(Db::new(LsmStorageBackend::open_with_options(path, opts)?))))
+    pub fn open_with_options(path: String, _options: FfiLsmOptions) -> Result<Arc<Self>, FfiBknError> {
+        Ok(Self::wrap(Backend::Disk(Db::new(RedbStorageBackend::open(path)?))))
     }
 
     /// Creates an ephemeral in-memory database instance.

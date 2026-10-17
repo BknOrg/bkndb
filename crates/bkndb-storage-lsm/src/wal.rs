@@ -61,6 +61,7 @@ pub fn append(file: &File, record: &WalRecord) -> Result<(), BknError> {
 /// the old frames and the new ones, and the *next* replay would stop at
 /// them and drop every commit made after this recovery.
 pub fn replay_from(file: &File, start_offset: u64) -> Result<(Vec<WalRecord>, u64), BknError> {
+    let file_len = file.metadata().map_err(io_err)?.len();
     let mut reader = BufReader::new(file.try_clone().map_err(io_err)?);
     reader.seek(SeekFrom::Start(start_offset)).map_err(io_err)?;
     let mut records = Vec::new();
@@ -71,8 +72,12 @@ pub fn replay_from(file: &File, start_offset: u64) -> Result<(Vec<WalRecord>, u6
         if reader.read_exact(&mut header).is_err() {
             break; // truncated length/crc header: stop here, nothing further to discard
         }
-        let len = u32::from_be_bytes(header[0..4].try_into().unwrap()) as usize;
+        let len_u64 = u32::from_be_bytes(header[0..4].try_into().unwrap()) as u64;
         let expected_crc = u32::from_be_bytes(header[4..8].try_into().unwrap());
+        if valid_end.checked_add(8 + len_u64).is_none_or(|end| end > file_len) {
+            break; // declared length runs past EOF: stop before allocating payload
+        }
+        let len = len_u64 as usize;
 
         let mut payload = vec![0u8; len];
         if reader.read_exact(&mut payload).is_err() {
@@ -86,7 +91,7 @@ pub fn replay_from(file: &File, start_offset: u64) -> Result<(Vec<WalRecord>, u6
             Err(_) => break,
         };
         records.push(record);
-        valid_end += 8 + len as u64;
+        valid_end += 8 + len_u64;
     }
     Ok((records, valid_end))
 }

@@ -12,7 +12,7 @@ readme = "README.md"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
-bkndb = { path = "../bkndb" }
+bkndb = { path = "../bkndb", features = ["redb-backend", "mem-backend", "graph", "relational-layer", "search"] }
 bkndb-core = { path = "../bkndb-core" }
 thiserror = "2"
 uniffi = { version = "0.32.2", features = ["build", "cli"] }
