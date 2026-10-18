@@ -151,8 +151,7 @@ def test_corruption_is_reported(tmp_path) -> None:
     data = bytearray(path.read_bytes())
     data[128 + 30] ^= 0x5A  # first data block, right after the 128-byte header
     path.write_bytes(bytes(data))
-    with bkndb.open(path) as db:
-        with pytest.raises(bkndb.CorruptionError):
+    with pytest.raises(bkndb.CorruptionError):
+        with bkndb.open(path) as db:
             db.verify_integrity()
-        with pytest.raises(bkndb.CorruptionError):
             db.select("items")
