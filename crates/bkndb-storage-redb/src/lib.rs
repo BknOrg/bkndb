@@ -38,7 +38,15 @@ pub struct IntegrityReport {
 fn map_storage_err(err: StorageError) -> BknError {
     match err {
         StorageError::Corrupted(msg) => BknError::Corruption(msg),
-        other => BknError::Backend(other.to_string()),
+        other => {
+            let msg = other.to_string();
+            let lower = msg.to_lowercase();
+            if lower.contains("corrupt") || lower.contains("invalid data") {
+                BknError::Corruption(msg)
+            } else {
+                BknError::Backend(msg)
+            }
+        }
     }
 }
 
@@ -51,7 +59,8 @@ fn map_db_err(err: DatabaseError, path: &Path) -> BknError {
         }
         other => {
             let msg = other.to_string();
-            if msg.to_lowercase().contains("corrupt") {
+            let lower = msg.to_lowercase();
+            if lower.contains("corrupt") || lower.contains("invalid data") {
                 BknError::Corruption(msg)
             } else {
                 BknError::Backend(msg)
