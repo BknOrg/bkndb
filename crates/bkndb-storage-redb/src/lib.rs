@@ -49,7 +49,14 @@ fn map_db_err(err: DatabaseError, path: &Path) -> BknError {
         DatabaseError::UpgradeRequired(v) => {
             BknError::Corruption(format!("database format upgrade required (version {v})"))
         }
-        other => BknError::Backend(other.to_string()),
+        other => {
+            let msg = other.to_string();
+            if msg.to_lowercase().contains("corrupt") {
+                BknError::Corruption(msg)
+            } else {
+                BknError::Backend(msg)
+            }
+        }
     }
 }
 
@@ -221,7 +228,13 @@ impl RedbStorageBackend {
     pub fn verify_integrity(&self) -> Result<IntegrityReport, BknError> {
         {
             let mut db = self.db.write().unwrap_or_else(|e| e.into_inner());
-            db.check_integrity().map_err(|e| map_db_err(e, &self.path))?;
+            let intact = db.check_integrity().map_err(|e| map_db_err(e, &self.path))?;
+            if !intact {
+                return Err(BknError::Corruption(format!(
+                    "database '{}' failed integrity check",
+                    self.path.display()
+                )));
+            }
         }
 
         let read_tx = {

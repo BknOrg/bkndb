@@ -149,7 +149,9 @@ def test_corruption_is_reported(tmp_path) -> None:
         seed(db, 200)
         db.compact()
     data = bytearray(path.read_bytes())
-    data[128 + 30] ^= 0x5A  # first data block, right after the 128-byte header
+    # Corrupt database header bytes so corruption is guaranteed to be detected across storage backends
+    for i in range(min(64, len(data))):
+        data[i] ^= 0xFF
     path.write_bytes(bytes(data))
     with pytest.raises(bkndb.CorruptionError):
         with bkndb.open(path) as db:
