@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bkndb"
-version = "0.2.3"
+version = "0.2.4"
 description = "Embedded hybrid graph + relational database engine — single-file, in-process, ACID."
 readme = "README.md"
 license = "Apache-2.0"
