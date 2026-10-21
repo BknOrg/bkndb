@@ -37,11 +37,11 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
                       │  Full-Text BM25  •  HNSW Vector ANN    │
                       └───────────────────┬────────────────────┘
                                           │
-                      ┌───────────────────▼────────────────────┐
+                      ┌────────────────────────────────────────┐
                       │            Storage Backends            │
-                      │  ► Native .bkndb LSM (mmap2, WAL)      │
+                      │  ► Redb Engine (default ACID backend)  │
                       │  ► In-Memory Backend (testing/cache)   │
-                      │  ► Redb Engine (optional backend)      │
+                      │  ► Native .bkndb LSM (optional engine) │
                       └────────────────────────────────────────┘
 ```
 
@@ -51,7 +51,7 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
 
 1. **Embedded & Zero-Daemon:** Runs directly inside your application process (like SQLite/DuckDB). No server setup, no port configuration, zero network latency.
 2. **Unified ACID Transactions:** Write relational records, graph nodes, directed edges, and search vectors in a single atomic transaction. Either everything commits, or nothing does.
-3. **Single-File Native Persistence (`.bkndb`):** Powered by an append-only LSM architecture with memory-mapped zero-copy reading (`memmap2`), WAL crash durability with CRC32 checksums, and adaptive MemTable buffering.
+3. **Single-File Native Persistence (`.bkndb`):** Powered by `redb` as the default battle-tested copy-on-write B-tree ACID storage layer for guaranteed durability, alongside an optional high-throughput append-only LSM architecture with memory-mapped zero-copy reading (`memmap2`) and WAL durability.
 4. **Sub-Millisecond Graph Traversal:** Built-in BFS shortest path, Dijkstra weighted path, blast radius traversal (impact analysis), in-degree centrality (top hubs), and cascading node deletion.
 5. **Built-in Full-Text & Vector Search:** Native BM25 inverted index and HNSW (Hierarchical Navigable Small World) vector index for fast semantic similarity search in the same database.
 6. **Zero-Cost Hybrid Joins:** Effortlessly join graph traversal results with relational metadata tables in one read transaction.
@@ -89,12 +89,12 @@ bkndb = "0.2"
 
 | Feature | Default | Description |
 | :--- | :---: | :--- |
-| `lsm-backend` | **Yes** | Native single-file `.bkndb` storage engine with zero-copy mmap. |
+| `redb-backend` | **Yes** | Default robust single-file ACID storage backend backed by `redb`. |
 | `mem-backend` | **Yes** | Ephemeral high-throughput in-memory storage engine. |
 | `graph` | **Yes** | Property graph layer, traversal algorithms, and Cypher `MATCH` queries. |
 | `relational-layer` | **Yes** | Relational tables, schema constraints, query builder, and SQL engine. |
 | `search` | **Yes** | Full-text search (BM25) and exact / HNSW vector similarity search. |
-| `redb-backend` | No | Optional storage backend backed by `redb`. |
+| `lsm-backend` | No | Optional append-only single-file LSM storage engine with zero-copy mmap. |
 
 ### Python
 

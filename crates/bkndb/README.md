@@ -16,7 +16,7 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
 
 - **Embedded & Zero-Daemon:** Runs directly inside your application process (like SQLite/DuckDB). No server setup, no port configuration, zero network latency.
 - **Unified Hybrid ACID Transactions:** Read and write relational rows and property graph nodes/edges in a single atomic transaction with snapshot isolation (`db.write_tx` / `db.read_tx`).
-- **High-Performance Native Storage (.bkndb):** Single-file container using an append-only LSM architecture with memory-mapped zero-copy reading (`memmap2`), WAL crash durability, and adaptive MemTable buffering.
+- **High-Performance Native Storage (.bkndb):** Single-file container powered by `redb` as the default copy-on-write B-tree ACID engine, alongside an optional append-only LSM architecture with memory-mapped zero-copy reading (`memmap2`) and WAL crash durability.
 - **Sub-Millisecond Graph Traversal:** Built-in BFS shortest path, Dijkstra weighted shortest path, multi-hop radius traversal (blast radius), in-degree centrality (top hubs), and cascading node deletion.
 - **Integrated Full-Text & Vector Search:** Native BM25 inverted index and HNSW (Hierarchical Navigable Small World) vector index for fast semantic similarity search in the same database.
 - **Relational Indexing & Hybrid Joins:** Secondary indexing, fast prefix search, and zero-cost joining of graph node traversals with relational metadata tables.
@@ -52,12 +52,12 @@ bkndb = "0.2"
 
 | Feature | Default | Description |
 | :--- | :---: | :--- |
-| `lsm-backend` | **Yes** | Native single-file `.bkndb` container with zero-copy mmap. |
+| `redb-backend` | **Yes** | Default robust single-file ACID storage backend powered by `redb`. |
 | `mem-backend` | **Yes** | High-throughput in-memory storage engine. |
 | `graph` | **Yes** | Property graph layer, traversal algorithms, and Cypher `MATCH` queries. |
 | `relational-layer` | **Yes** | Relational tables, primary keys, secondary indices, and prefix queries. |
 | `search` | **Yes** | Full-text search (BM25) and exact / HNSW vector similarity search. |
-| `redb-backend` | No | Optional storage backend powered by `redb`. |
+| `lsm-backend` | No | Optional append-only single-file LSM storage engine with zero-copy mmap. |
 
 Example for a minimal in-memory graph-only build:
 ```toml

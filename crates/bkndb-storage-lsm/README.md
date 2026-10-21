@@ -6,7 +6,7 @@
 
 **Native single-file Log-Structured Merge-tree (LSM) storage engine with memory-mapped zero-copy reading (`memmap2`) for BknDb.**
 
-`bkndb-storage-lsm` is the default on-disk storage engine for `bkndb`. It packs all transactional data, graph topology, relational tables, and vector indexes into a single proprietary `.bkndb` container file with high write throughput, sub-millisecond point lookups, and minimal memory overhead.
+`bkndb-storage-lsm` is an optional high-performance append-only on-disk storage engine for `bkndb` (enabled via the `lsm-backend` feature flag). It packs transactional data, graph topology, relational tables, and vector indexes into a single proprietary `.bkndb` container file with high write throughput, sub-millisecond point lookups, and minimal memory overhead.
 
 ---
 

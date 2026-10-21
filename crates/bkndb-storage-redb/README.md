@@ -4,34 +4,34 @@
 [![Documentation](https://docs.rs/bkndb-storage-redb/badge.svg)](https://docs.rs/bkndb-storage-redb)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Optional persistent storage engine backend for BknDb, backed by [`redb`](https://crates.io/crates/redb).**
+**Default persistent storage engine backend for BknDb, backed by [`redb`](https://crates.io/crates/redb).**
 
-`bkndb-storage-redb` implements the `StorageEngine` trait using Redb, an embedded key-value database written in pure Rust that uses copy-on-write B-trees with strict ACID transaction guarantees.
+`bkndb-storage-redb` implements the storage traits for BknDb using Redb, an embedded key-value database written in pure Rust that uses copy-on-write B-trees with strict ACID transaction guarantees.
 
-While the native `.bkndb` LSM engine (`bkndb-storage-lsm`) is the recommended default for most workloads, `redb` is available as a battle-tested alternative backend.
+It serves as the default on-disk storage engine for `bkndb`, providing robust single-file persistence (`.bkndb`), table scans, MVCC read transactions, and reliable crash recovery.
 
 ---
 
 ## Installation & Feature Flag
 
-Enable the `redb-backend` feature flag in `bkndb`:
+`redb-backend` is enabled by default in `bkndb`:
 
 ```toml
 [dependencies]
-bkndb = { version = "0.2", features = ["redb-backend"] }
+bkndb = "0.2"
 ```
 
 ---
 
 ## Usage
 
-### Via Top-Level Facade (`BknDb::open_redb`)
+### Via Top-Level Facade (`BknDb::open`)
 
 ```rust
 use bkndb::BknDb;
 
-// Opens or creates a persistent Redb-backed database file
-let db = BknDb::open_redb("redb_store.db")?;
+// Opens or creates a persistent Redb-backed database file (default backend)
+let db = BknDb::open("redb_store.bkndb")?;
 
 // Perform full graph and relational transactions
 db.write_tx(|b| {
