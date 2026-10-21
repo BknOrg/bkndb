@@ -388,9 +388,9 @@ println!("File size: {} bytes, Reclaimable: {} bytes", stats.file_size, stats.re
 | :--- | :--- |
 | [`crates/bkndb`](crates/bkndb) | Primary top-level public facade crate (re-exports `bkndb-core`). |
 | [`crates/bkndb-core`](crates/bkndb-core) | Core graph, relational, SQL/MATCH parsers, HNSW ANN, and storage abstractions. |
-| [`crates/bkndb-storage-lsm`](crates/bkndb-storage-lsm) | Native single-file `.bkndb` LSM storage engine (mmap zero-copy, WAL, SSTables). |
+| [`crates/bkndb-storage-redb`](crates/bkndb-storage-redb) | Default robust single-file ACID storage engine backed by `redb`. |
 | [`crates/bkndb-storage-mem`](crates/bkndb-storage-mem) | In-memory key-value backend for ephemeral databases and testing. |
-| [`crates/bkndb-storage-redb`](crates/bkndb-storage-redb) | Alternative persistent storage engine backed by `redb`. |
+| [`crates/bkndb-storage-lsm`](crates/bkndb-storage-lsm) | Optional append-only LSM storage engine (mmap zero-copy, WAL, SSTables). |
 | [`crates/bkndb-ffi`](crates/bkndb-ffi) | UniFFI C/Kotlin/Swift bridge with 16KB page size compliance. |
 | [`bindings/python`](bindings/python) | Python package with high-level Pythonic wrapper, Pandas & NetworkX integration. |
 
