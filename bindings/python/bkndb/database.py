@@ -49,10 +49,13 @@ class Database(_SearchOps, _IoOps):
 
         Raises :class:`bkndb.DatabaseLockedError` if another handle or process
         has it open, and :class:`bkndb.CorruptionError` if its structure is
-        damaged. The keyword options tune the storage engine:
-        ``memtable_flush_bytes`` (write buffer size, default 16 MiB),
-        ``compaction_trigger_files`` (default 16), ``block_size`` (bytes per
-        on-disk block, default 4096) and ``compression`` (lz4, default on).
+        damaged.
+
+        Note:
+            BknDb uses Redb as its default on-disk ACID storage engine.
+            The keyword options (``memtable_flush_bytes``, ``compaction_trigger_files``,
+            ``block_size``, and ``compression``) are retained for backward compatibility
+            with LSM engine configurations.
         """
         path = os.fspath(path)
         tuned = (memtable_flush_bytes, compaction_trigger_files, block_size, compression)

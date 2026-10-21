@@ -63,7 +63,10 @@ pub fn join_nodes_by_column<R: StorageReadTx>(
     foreign_key_col: &str,
 ) -> Result<Vec<JoinedNodeRows>, BknError> {
     let col = schema.column(foreign_key_col).ok_or_else(|| {
-        BknError::Encoding(format!("no such column '{foreign_key_col}' in schema '{}'", schema.name()))
+        BknError::Encoding(format!(
+            "no such column '{foreign_key_col}' in schema '{}'",
+            schema.name()
+        ))
     })?;
     if col.kind != ColumnKind::Int {
         return Err(BknError::Encoding(format!(
@@ -72,12 +75,29 @@ pub fn join_nodes_by_column<R: StorageReadTx>(
         )));
     }
 
+    if nodes.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut by_fk: Option<HashMap<i64, Vec<Row>>> = None;
     if !schema.is_indexed(foreign_key_col) {
+        // shortcut: unindexed join scans table once; index foreign key for O(1) lookups.
+        let target_fks: std::collections::HashSet<i64> = nodes
+            .iter()
+            .filter_map(|&id| {
+                if id.0 <= i64::MAX as u64 {
+                    Some(id.0 as i64)
+                } else {
+                    None
+                }
+            })
+            .collect();
         let mut groups: HashMap<i64, Vec<Row>> = HashMap::new();
         for row in crate::relational::db::scan_all_in(rtx, schema)? {
             if let Some(PropValue::Int(fk)) = row.get(schema, foreign_key_col) {
-                groups.entry(*fk).or_default().push(row.clone());
+                if target_fks.contains(fk) {
+                    groups.entry(*fk).or_default().push(row);
+                }
             }
         }
         by_fk = Some(groups);
@@ -107,7 +127,9 @@ pub fn join_rows_with_nodes<R: StorageReadTx>(
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let node = match row.get(schema, node_id_column) {
-            Some(PropValue::Int(i)) if *i >= 0 => crate::graph::db::get_node_in(rtx, NodeId(*i as u64))?,
+            Some(PropValue::Int(i)) if *i >= 0 => {
+                crate::graph::db::get_node_in(rtx, NodeId(*i as u64))?
+            }
             _ => None,
         };
         out.push((row.clone(), node));

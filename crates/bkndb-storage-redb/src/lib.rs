@@ -1,7 +1,7 @@
 use std::fs;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 use bkndb_core::{BknError, KvIter, KvPairs, StorageBackend, StorageReadTx, StorageWriteTx, TableSpec};
 use redb::{
@@ -107,6 +107,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 pub struct RedbStorageBackend {
     path: PathBuf,
     db: RwLock<Database>,
+    writer_lock: Mutex<()>,
 }
 
 impl RedbStorageBackend {
@@ -122,6 +123,7 @@ impl RedbStorageBackend {
         Ok(Self {
             path,
             db: RwLock::new(db),
+            writer_lock: Mutex::new(()),
         })
     }
 
@@ -139,6 +141,7 @@ impl RedbStorageBackend {
 
     /// Forces compaction of the Redb database file to reclaim free pages.
     pub fn force_compact(&self) -> Result<(), BknError> {
+        let _guard = self.writer_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut db = self.db.write().unwrap_or_else(|e| e.into_inner());
         db.compact().map_err(map_compaction_err)?;
         Ok(())
@@ -295,6 +298,7 @@ pub struct RedbReadTx<'a> {
 
 pub struct RedbWriteTx<'a> {
     tx: WriteTransaction,
+    _guard: MutexGuard<'a, ()>,
     _marker: std::marker::PhantomData<&'a RedbStorageBackend>,
 }
 
@@ -316,6 +320,7 @@ impl StorageBackend for RedbStorageBackend {
     }
 
     fn begin_write(&self) -> Result<Self::WriteTx<'_>, BknError> {
+        let guard = self.writer_lock.lock().unwrap_or_else(|e| e.into_inner());
         let tx = self
             .db
             .read()
@@ -324,6 +329,7 @@ impl StorageBackend for RedbStorageBackend {
             .map_err(map_tx_err)?;
         Ok(RedbWriteTx {
             tx,
+            _guard: guard,
             _marker: std::marker::PhantomData,
         })
     }

@@ -59,3 +59,30 @@ fn redb_backend_operational_primitives_and_locking() {
 
     backend.force_compact().unwrap();
 }
+
+#[test]
+fn redb_writers_are_serialized() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("concurrent_writers.bkndb");
+    let backend = std::sync::Arc::new(RedbStorageBackend::open(&path).unwrap());
+    let t = TableSpec("counter");
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let b = backend.clone();
+        handles.push(std::thread::spawn(move || {
+            for _ in 0..50 {
+                let mut w = b.begin_write().unwrap();
+                let n = w.get(t, b"n").unwrap().map_or(0, |v| u64::from_be_bytes(v.try_into().unwrap()));
+                w.put(t, b"n", &(n + 1).to_be_bytes()).unwrap();
+                w.commit().unwrap();
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+    let r = backend.begin_read().unwrap();
+    let n = r.get(t, b"n").unwrap().unwrap();
+    assert_eq!(u64::from_be_bytes(n.try_into().unwrap()), 400, "all 400 increments across 8 threads must succeed");
+}
+

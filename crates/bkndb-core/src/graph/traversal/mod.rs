@@ -102,12 +102,22 @@ pub(crate) fn traverse_in<R: StorageReadTx>(
 
     visited.insert(start);
     queue.push_back((start, 0));
-    out.push(TraversedNode {
-        node: start,
-        depth: 0,
-        via_edge: None,
-        parent: None,
-    });
+
+    let include_start = match filter_label {
+        Some(target) => match get_node_in(rtx, start)? {
+            Some(record) => record.label == target,
+            None => false,
+        },
+        None => true,
+    };
+    if include_start {
+        out.push(TraversedNode {
+            node: start,
+            depth: 0,
+            via_edge: None,
+            parent: None,
+        });
+    }
 
     while let Some((current, depth)) = queue.pop_front() {
         if depth >= max_depth {
@@ -116,17 +126,18 @@ pub(crate) fn traverse_in<R: StorageReadTx>(
         let neighbors = neighbors_for_traversal(rtx, current, direction, edge_types)?;
         for (next, edge_id) in neighbors {
             if visited.insert(next) {
+                queue.push_back((next, depth + 1));
+
                 if let Some(target_label) = filter_label {
-                    if let Some(record) = get_node_in(rtx, next)? {
-                        if record.label != target_label {
-                            continue;
-                        }
-                    } else {
+                    let matches = match get_node_in(rtx, next)? {
+                        Some(record) => record.label == target_label,
+                        None => false,
+                    };
+                    if !matches {
                         continue;
                     }
                 }
 
-                queue.push_back((next, depth + 1));
                 out.push(TraversedNode {
                     node: next,
                     depth: depth + 1,

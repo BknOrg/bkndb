@@ -187,7 +187,12 @@ pub fn graph_advanced_algorithms_suite<B: StorageBackend>(backend: B) {
     assert!(both_nodes.contains(&n3));
     assert!(!both_nodes.contains(&n4));
 
-    // Traversal with filter_node_label("Function")
+    let n5 = db.create_node("Function", Properties::new()).unwrap();
+    let _e4 = db
+        .create_edge(n4, "calls", n5, Properties::new())
+        .unwrap();
+
+    // Traversal with filter_node_label("Function") visits n1, n2 and reaches n5 across n3/n4
     let only_fn = db
         .traversal()
         .start(n1)
@@ -197,7 +202,7 @@ pub fn graph_advanced_algorithms_suite<B: StorageBackend>(backend: B) {
         .run()
         .unwrap();
     let only_fn_nodes: Vec<_> = only_fn.iter().map(|n| n.node).collect();
-    assert_eq!(only_fn_nodes, vec![n1, n2]); // n3 is "Struct", so excluded
+    assert_eq!(only_fn_nodes, vec![n1, n2, n5]); // intermediate n3 (Struct) & n4 (Module) traversed through but excluded from output
 
     // 2. Test Shortest Path (BFS)
     // Graph: A -> B -> C -> D, and shortcut A -> C
