@@ -16,3 +16,5 @@ bindings/python/dist/
 *.exe
 go.work
 go.work.sum
+bkndb-ffi*
+
