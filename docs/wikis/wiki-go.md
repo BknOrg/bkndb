@@ -115,8 +115,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for _, row := range res.RowMaps() {
-		fmt.Printf("User #%v: %s <%s>\n", row["id"], row["name"], row["email"])
+	for _, row := range res.Rows {
+		fmt.Printf("User #%v: %s <%s>\n", row[0], row[1], row[2])
 	}
 
 	// 3. Knowledge Graph
@@ -191,9 +191,9 @@ if err != nil {
 // Columns returned
 fmt.Println("Columns:", res.Columns)
 
-// Access rows via RowMaps()
-for _, row := range res.RowMaps() {
-    fmt.Printf("[%v] %v: %v\n", row["id"], row["role"], row["content"])
+// Access rows
+for _, row := range res.Rows {
+    fmt.Printf("[%v] %v: %v\n", row[0], row[1], row[2])
 }
 ```
 
@@ -295,8 +295,8 @@ if err != nil {
     log.Fatal(err)
 }
 
-for _, row := range res.RowMaps() {
-    fmt.Printf("Agent %s can use skill %s\n", row["a.name"], row["s.name"])
+for _, row := range res.Rows {
+    fmt.Printf("Agent %s can use skill %s\n", row[0], row[1])
 }
 ```
 
