@@ -1,0 +1,106 @@
+name: Go bindings
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "bindings/bkndb.h"
+      - "bindings/go/**"
+      - ".github/workflows/go.yml"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Go Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Rust FFI C-ABI library
+        run: cargo build --release -p bkndb-ffi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: bindings/go/bkndb/go.mod
+
+      - name: Setup native library on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item target/release/bkndb_ffi.dll bindings/go/bkndb/bkndb_ffi.dll
+          Copy-Item target/release/bkndb_ffi.dll bindings/go/bkndb/example/bkndb_ffi.dll
+
+      - name: Setup native library on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cp target/release/libbkndb_ffi.so bindings/go/bkndb/
+          cp target/release/libbkndb_ffi.so bindings/go/bkndb/example/
+
+      - name: Setup native library on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cp target/release/libbkndb_ffi.dylib bindings/go/bkndb/
+          cp target/release/libbkndb_ffi.dylib bindings/go/bkndb/example/
+
+      - name: Run Go tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: bindings/go/bkndb
+        run: go test -v ./...
+
+      - name: Run Go tests (Linux)
+        if: runner.os == 'Linux'
+        working-directory: bindings/go/bkndb
+        run: LD_LIBRARY_PATH=$PWD go test -v ./...
+
+      - name: Run Go tests (macOS)
+        if: runner.os == 'macOS'
+        working-directory: bindings/go/bkndb
+        run: DYLD_LIBRARY_PATH=$PWD go test -v ./...
+
+      - name: Run Go example (Windows)
+        if: runner.os == 'Windows'
+        working-directory: bindings/go/bkndb
+        run: go run example/main.go
+
+      - name: Run Go example (Linux)
+        if: runner.os == 'Linux'
+        working-directory: bindings/go/bkndb
+        run: LD_LIBRARY_PATH=$PWD go run example/main.go
+
+      - name: Run Go example (macOS)
+        if: runner.os == 'macOS'
+        working-directory: bindings/go/bkndb
+        run: DYLD_LIBRARY_PATH=$PWD go run example/main.go
+
+      - name: Upload compiled FFI binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bkndb-ffi-${{ matrix.os }}
+          path: |
+            target/release/bkndb_ffi.dll
+            target/release/libbkndb_ffi.so
+            target/release/libbkndb_ffi.dylib
+            bindings/bkndb.h
+          if-no-files-found: ignore

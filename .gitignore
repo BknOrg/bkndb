@@ -12,3 +12,7 @@ __pycache__/
 .pytest_cache/
 bindings/python/build/
 bindings/python/dist/
+.gocache/
+*.exe
+go.work
+go.work.sum

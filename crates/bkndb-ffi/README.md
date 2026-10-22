@@ -15,6 +15,7 @@
 - **Android (Kotlin):** Generates Android AAR libraries compiled with NDK. Fully compliant with **Android 15+ 16KB page size** alignment (`-C link-arg=-Wl,-z,max-page-size=16384`).
 - **iOS (Swift):** Generates Swift bindings and universal XCFrameworks for iOS physical devices (`arm64`) and simulators (`x86_64` / `arm64-sim`).
 - **Python:** Provides the native dynamic library loaded by `bindings/python/bkndb/` via UniFFI ctypes loader.
+- **Go:** Provides zero-dependency native Go bindings in `bindings/go/bkndb/` via C-ABI (`bkndb.h`) and Windows syscall DLL loader (no GCC required on Windows).
 
 ---
 
@@ -22,9 +23,12 @@
 
 ```
 bindings/
+├── bkndb.h                   # Public C-ABI header (Go, C, C++, Zig)
 ├── bkndb_ffi.swift           # Swift native interface
-├── bkndb_ffiFFI.h            # C header
+├── bkndb_ffiFFI.h            # UniFFI C header
 ├── bkndb_ffiFFI.modulemap    # Clang modulemap
+├── go/                       # Go package (bkndb)
+│   └── bkndb/
 ├── uniffi/
 │   └── bkndb_ffi/
 │       └── bkndb_ffi.kt      # Kotlin native interface
@@ -105,6 +109,15 @@ let aliceId = try db.createNode(label: "Person", properties: props)
 let neighbors = try db.neighbors(nodeId: aliceId, direction: .out, edgeType: "KNOWS")
 print("Found \(neighbors.count) connections")
 ```
+
+## Documentation & Language Guides
+
+Comprehensive guides and complete API references are available in `docs/wikis/`:
+- **Go**: [wiki-go.md](../../docs/wikis/wiki-go.md)
+- **Swift (iOS/macOS)**: [wiki-swift.md](../../docs/wikis/wiki-swift.md)
+- **Kotlin (Android/JVM)**: [wiki-kotlin.md](../../docs/wikis/wiki-kotlin.md)
+- **Python**: [wiki-py.md](../../docs/wikis/wiki-py.md)
+- **Rust**: [wiki-rust.md](../../docs/wikis/wiki-rust.md)
 
 ---
 

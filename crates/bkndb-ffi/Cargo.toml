@@ -14,6 +14,8 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [dependencies]
 bkndb = { path = "../bkndb", features = ["redb-backend", "mem-backend", "graph", "relational-layer", "search"] }
 bkndb-core = { path = "../bkndb-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
 uniffi = { version = "0.32.2", features = ["build", "cli"] }
 

@@ -2,6 +2,7 @@ name: Python wheels
 
 on:
   push:
+    branches: [main]
     tags: ["python-v*"]
   pull_request:
     paths:
@@ -105,8 +106,8 @@ jobs:
           python -c "import bkndb; db = bkndb.in_memory(); n = db.create_node('Smoke', {}); assert db.get_node(n); print('ok', bkndb.__version__)"
 
   publish:
-    # Only on a `python-vX.Y.Z` tag, after tests and every build succeeded.
-    if: startsWith(github.ref, 'refs/tags/python-v')
+    # Explicitly disabled during test build validation phase. Re-enable when ready to publish release.
+    if: false && startsWith(github.ref, 'refs/tags/python-v')
     needs: [test, wheels, sdist, smoke]
     runs-on: ubuntu-latest
     environment: pypi

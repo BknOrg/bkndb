@@ -2,6 +2,7 @@
 //! exposing the graph layer, the relational layer (runtime schemas, queries,
 //! aggregates), explicit transactions, and the batch sync engine.
 
+pub mod c_api;
 pub mod engine;
 pub mod error;
 mod lang;
