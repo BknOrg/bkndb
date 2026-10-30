@@ -81,7 +81,7 @@ Because `bkndb` contains compiled Rust FFI code, distributing on PyPI requires c
 The script supports two modes:
 
 ### Mode A: `GitHubTag` (Recommended for Production)
-Creates and pushes a tag `python-v<version>` (e.g. `python-v0.2.0`). This triggers `.github/workflows/python-wheels.yml`, which compiles native wheels across:
+Creates and pushes a tag `python-v<version>` (e.g. `python-v0.3.0`). This triggers `.github/workflows/python-wheels.yml`, which compiles native wheels across:
 * Windows x64
 * Linux x86_64 & aarch64 (`manylinux`)
 * macOS Intel (x86_64) & Apple Silicon (`arm64`)

@@ -1,5 +1,17 @@
 # bkndb — Python Bindings
 
+
+This guide targets the **0.3 API** in this checkout. Disk databases use Redb;
+legacy LSM tuning keywords are accepted for compatibility but are ignored.
+Old LSM `.bkndb` files are not automatically converted to the Redb format.
+Examples after the quick start assume an open `db` and the named tables,
+nodes, and application helpers already exist. Generate embeddings in your
+application; BknDb stores and searches them.
+
+Text/vector hits expose `hit.row` and `hit.score`. Cosine/dot scores sort
+highest first; Euclidean scores are distances and sort lowest first.
+HNSW dimensions are inferred from the stored vectors and must stay consistent.
+
 [![PyPI Version](https://img.shields.io/pypi/v/bkndb.svg)](https://pypi.org/project/bkndb/)
 [![Python Version](https://img.shields.io/pypi/pyversions/bkndb.svg)](https://pypi.org/project/bkndb/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -82,7 +94,7 @@ with bkndb.open("knowledge.bkndb") as db: # or bkndb.in_memory()
 - `db.close()`: Explicitly closes the database and releases file locks.
 - `db.compact()`: Rewrites the database file, reclaiming space from deleted records.
 - `db.backup(dest_path)`: Performs an online hot backup without stopping reads or writes.
-- `db.verify_integrity()`: Validates CRC32 checksums of all storage blocks.
+- `db.verify_integrity()`: Checks storage integrity; raises `CorruptionError` on failure.
 - `db.stats()`: Returns entity counts and low-level storage metrics (`reclaimable_bytes`, file size).
 
 ---
@@ -92,8 +104,8 @@ with bkndb.open("knowledge.bkndb") as db: # or bkndb.in_memory()
 - **Topologies:** `neighbors(id, direction, edge_type)`, `degree(id, direction)`.
 - **Shortest Path (BFS):**
   ```python
-  path = db.find_shortest_path(start_node, target_node, edge_type="CALLS")
-  # Returns: distance, list of hops
+  path = db.find_shortest_path(start_node, target_node, edge_types=["CALLS"])
+  # Inspect path.edge_ids (hop count) and path.steps when a path exists.
   ```
 - **Dijkstra Weighted Path:**
   ```python
@@ -102,7 +114,7 @@ with bkndb.open("knowledge.bkndb") as db: # or bkndb.in_memory()
   ```
 - **Blast Radius / Impact Traversal:**
   ```python
-  hits = db.traverse(root_node, direction=bkndb.Direction.INCOMING, max_depth=3)
+  hits = db.traverse(root_node, direction=bkndb.Direction.IN, max_depth=3)
   ```
 - **Top Hubs & Centrality:**
   ```python
@@ -110,7 +122,7 @@ with bkndb.open("knowledge.bkndb") as db: # or bkndb.in_memory()
   ```
 - **Cascading Deletion:**
   ```python
-  stats = db.cascade_delete(node_id)
+  deleted_ids = db.cascade_delete(node_id, "CONTAINS")
   ```
 
 ---
@@ -127,7 +139,7 @@ with bkndb.open("knowledge.bkndb") as db: # or bkndb.in_memory()
   cond = (col("age") >= 18) & (col("status") == "active")
 
   # String & List operators
-  cond = col("email").endswith("@company.com") | col("tags").contains("vip")
+  cond = col("email").like("%@company.com") | col("tags").contains("vip")
 
   # Nested JSON / Map access
   cond = col("metadata.author.id") == 42
@@ -184,7 +196,7 @@ db.create_vector_index("articles", "emb", metric="cosine", m=16, ef_construction
 
 results = db.search_vector("articles", "emb", embedding, limit=5, metric="cosine")
 for res in results:
-    print(f"PK: {res.row.pk}, Distance: {res.distance:.4f}")
+    print(f"PK: {res.row.pk}, Similarity: {res.score:.4f}")
 ```
 
 ---
@@ -243,14 +255,27 @@ db.import_csv("users", "new_users.csv", mode="insert")
 
 ## Development & Building from Source
 
+Use Python 3.10+ and a Rust stable toolchain with edition 2024 support.
+From the repository root, in an activated virtual environment:
+
 ```bash
-cd bindings/python
-python -m venv .venv
-# Activate virtualenv (Linux/macOS: source .venv/bin/activate, Windows: .venv\Scripts\activate)
-pip install maturin pytest
-maturin develop --release
-pytest
+python -m pip install "./bindings/python[test,pandas,networkx]"
 ```
+
+This builds the native library and generates the private UniFFI bindings via
+Maturin. To test the installed package without accidentally importing an
+unbuilt source package, copy `bindings/python/tests` to a temporary directory,
+change to that directory, then run:
+
+```bash
+python -m pytest -q --import-mode=importlib tests
+```
+
+For an editable build, activate a virtual environment, install `maturin`, then
+run `maturin develop --release` from `bindings/python`. A normal source install
+above is sufficient for trying this checkout. See the
+[Python CI workflow](../../.github/workflows/python-wheels.yml) for the full
+build and test procedure.
 
 ---
 

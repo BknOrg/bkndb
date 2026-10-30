@@ -12,7 +12,7 @@
 
 ## Supported Targets
 
-- **Android (Kotlin):** Generates Android AAR libraries compiled with NDK. Fully compliant with **Android 15+ 16KB page size** alignment (`-C link-arg=-Wl,-z,max-page-size=16384`).
+- **Android (Kotlin):** Generates Kotlin source and native `.so` libraries compiled with the NDK. The Android script sets 16KB linker alignment (`-C link-arg=-Wl,-z,max-page-size=16384`); packaging an AAR and validating the final APK/AAB are application build steps.
 - **iOS (Swift):** Generates Swift bindings and universal XCFrameworks for iOS physical devices (`arm64`) and simulators (`x86_64` / `arm64-sim`).
 - **Python:** Provides the native dynamic library loaded by `bindings/python/bkndb/` via UniFFI ctypes loader.
 - **Go:** Provides zero-dependency native Go bindings in `bindings/go/bkndb/` via C-ABI (`bkndb.h`) and Windows syscall DLL loader (no GCC required on Windows).
@@ -41,7 +41,7 @@ bindings/
 
 ### Android (PowerShell / Linux)
 
-Run the automated Android build script (requires `ANDROID_NDK_HOME`):
+Run from the repository root with the Android NDK installed and Cargo's linker configured for the target. Setting `ANDROID_NDK_HOME` alone does not configure that linker:
 
 ```powershell
 ./scripts/build_android.ps1
@@ -55,32 +55,41 @@ Supported ABIs:
 
 ### iOS (Bash / macOS)
 
-Run the automated iOS build script (requires Xcode):
+On macOS with Xcode, generate the Swift bindings and prepare the headers expected by the packaging script, then build from the repository root:
 
 ```bash
-./scripts/build_ios.sh
+cargo build --release -p bkndb-ffi
+cargo run --release -p bkndb-ffi --bin uniffi-bindgen -- generate --library target/release/libbkndb_ffi.dylib --language swift --out-dir bindings
+mkdir -p bindings/swift
+cp bindings/bkndb_ffiFFI.h bindings/swift/
+cp bindings/bkndb_ffiFFI.modulemap bindings/swift/module.modulemap
+bash scripts/build_ios.sh release bindings/ios
 ```
 
-Generates `BknDb.xcframework` ready for drag-and-drop into Xcode projects or Swift Package Manager (SPM).
+This writes `bindings/ios/BknDb.xcframework`. Add it together with the generated Swift source to your Xcode target, or create your own Swift package wrapper. This checkout does not provide a `Package.swift` or an SPM product.
 
 ### Generating Bindings via `uniffi-bindgen`
 
 ```bash
-cargo run --bin uniffi-bindgen generate \
+cargo build --release -p bkndb-ffi
+cargo run --release -p bkndb-ffi --bin uniffi-bindgen -- generate \
     --library target/release/libbkndb_ffi.so \
     --language kotlin \
-    --out-dir bindings/uniffi/
+    --out-dir bindings
 ```
 
 ---
 
 ## Kotlin Example (Android)
 
+The examples use the 0.3 FFI API. Generate bindings and native libraries from the same checkout. Disk databases use Redb; legacy LSM options passed to `openWithOptions` are ignored. Redb does not automatically migrate LSM `.bkndb` files.
+
 ```kotlin
 import uniffi.bkndb_ffi.*
 
 // Open database
 val db = BknDbEngine.open("/data/data/com.example.app/files/app.bkndb")
+try {
 
 // Create graph node
 val props = mapOf("name" to FfiPropValue.Str("Alice"))
@@ -89,6 +98,9 @@ val aliceId = db.createNode("Person", props)
 // Query neighbors
 val friends = db.neighbors(aliceId, FfiDirection.OUT, "KNOWS")
 println("Found ${friends.size} friends")
+} finally {
+    db.close()
+}
 ```
 
 ---
@@ -96,17 +108,20 @@ println("Found ${friends.size} friends")
 ## Swift Example (iOS)
 
 ```swift
-import BknDb
+import Foundation
+
+// Compile the generated Swift file in your app target, or import your own wrapper module.
 
 // Open database
 let db = try BknDbEngine.open(path: documentsUrl.appendingPathComponent("app.bkndb").path)
+defer { try? db.close() }
 
 // Create node
 let props: [String: FfiPropValue] = ["name": .str("Alice")]
 let aliceId = try db.createNode(label: "Person", properties: props)
 
 // Traverse
-let neighbors = try db.neighbors(nodeId: aliceId, direction: .out, edgeType: "KNOWS")
+let neighbors = try db.neighbors(node: aliceId, direction: .out, edgeType: "KNOWS")
 print("Found \(neighbors.count) connections")
 ```
 

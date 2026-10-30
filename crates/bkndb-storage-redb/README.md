@@ -18,7 +18,7 @@ It serves as the default on-disk storage engine for `bkndb`, providing robust si
 
 ```toml
 [dependencies]
-bkndb = "0.2"
+bkndb = "0.3"
 ```
 
 ---

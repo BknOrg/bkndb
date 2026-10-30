@@ -7,7 +7,7 @@
 **Core primitives, hybrid transactional interface, graph engine abstractions, and relational schema layer for the `bkndb` database engine.**
 
 `bkndb-core` provides the foundational building blocks for BknDb:
-- The abstract storage traits (`StorageEngine`, `StorageReadTx`, `StorageWriteTx`).
+- The abstract storage traits (`StorageBackend`, `StorageReadTx`, `StorageWriteTx`).
 - The property graph data model, traversal engine, and graph algorithms.
 - The typed relational catalog, secondary indexing, and query builder.
 - The text query language parsers (SQL subset and Cypher `MATCH`).
@@ -22,18 +22,18 @@ Most application developers should depend on the top-level [`bkndb`](https://cra
 
 ```
 bkndb-core/src/
-├── storage.rs        # StorageEngine, StorageReadTx, StorageWriteTx, TableSpec
-├── db/               # Generic Db<B>, WriteBatch<B>, DbReadBatch<B>
+├── storage.rs        # StorageBackend, StorageReadTx, StorageWriteTx, TableSpec
+├── db/               # Generic Db<B>, DbWriteBatch<W>, DbReadBatch<R>
 ├── graph/            # Property graph: nodes, edges, BFS, Dijkstra, top hubs, cascade
 ├── relational/       # Relational catalog, TableSchema, ColumnSchema, query builder
 │   ├── ann/          # HNSW approximate nearest neighbor vector indexing
 │   ├── search/       # Full-text inverted index with BM25 ranking
 │   ├── codec.rs      # Big-endian and sortable key/value encodings
-│   └── expr.rs       # Filter expressions: col("a") == 1, .is_in(), .like()
+│   └── expr.rs       # Filter expressions: col("a").eq(1), .is_in(), .like()
 ├── lang/             # Query text parsers & executors
 │   ├── sql/          # SQL subset: SELECT, INSERT, UPDATE, DELETE, CREATE/DROP TABLE
 │   └── graph/        # Cypher MATCH pattern parser and projection engine
-├── hybrid.rs         # SyncBatch bulk sync and graph-relational join helpers
+├── hybrid.rs         # Graph-relational join helpers; bulk sync is in db/sync.rs
 ├── kv/               # Raw key-value namespace operations
 └── value.rs          # PropValue, Properties, and dynamic typing
 ```
@@ -55,16 +55,19 @@ bkndb-core/src/
 
 ## Implementing a Custom Storage Backend
 
-Any key-value engine that supports ordered byte-string keys and transactional snapshots can be used as a backend for BknDb by implementing the `StorageEngine` trait:
+Any key-value engine that supports ordered byte-string keys and transactional snapshots can be used as a backend for BknDb by implementing the `StorageBackend` trait:
 
-```rust
-use bkndb_core::{StorageEngine, StorageReadTx, StorageWriteTx, TableSpec, BknError};
+The skeleton below assumes `MyReadTx` / `MyWriteTx` implement the read/write
+traits and `MyCustomEngine` is `Send + Sync`.
+
+```text
+use bkndb_core::{StorageBackend, StorageReadTx, StorageWriteTx, TableSpec, BknError};
 
 pub struct MyCustomEngine { /* ... */ }
 
-impl StorageEngine for MyCustomEngine {
-    type ReadTx<'a> = MyReadTx<'a>;
-    type WriteTx<'a> = MyWriteTx<'a>;
+impl StorageBackend for MyCustomEngine {
+    type ReadTx<'a> = MyReadTx<'a> where Self: 'a;
+    type WriteTx<'a> = MyWriteTx<'a> where Self: 'a;
 
     fn begin_read(&self) -> Result<Self::ReadTx<'_>, BknError> {
         // Return a snapshot-isolated read transaction
@@ -78,23 +81,30 @@ impl StorageEngine for MyCustomEngine {
 }
 ```
 
-Once implemented, you can wrap it with `Db::new(backend)` to gain access to the full graph, relational, SQL, vector, and hybrid query capabilities of BknDb.
+Once implemented, wrap it with `Db::new(backend)`. Enable `graph`,
+`relational`, and `search` as needed; `bkndb-core` defaults to `std` only.
+The `db/sync.rs` module provides `SyncBatch`, `NodeRef`, and `SyncBatchResult`.
 
 ---
 
 ## Conformance Testing
 
-To verify that a storage backend conforms to all BknDb ACID and query requirements, use the conformance suites provided under `bkndb_core::test_util`:
+To verify that a storage backend conforms to the raw KV transaction contract, use the conformance suites provided under `bkndb_core::test_util`:
 
-```rust
+Enable the `test-util` feature on `bkndb-core`. This example assumes your backend type is defined:
+
+```text
 #[test]
 fn test_my_backend_conformance() {
     let engine = MyCustomEngine::new();
-    bkndb_core::test_util::run_all_conformance_suites(&engine);
+    bkndb_core::test_util::conformance_suite(&engine);
 }
 ```
 
 ---
+
+Additional graph, relational, search, and hybrid suites are exported from
+`test_util`; see the existing backend conformance tests for the matching setup.
 
 ## License
 

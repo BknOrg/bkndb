@@ -1,5 +1,36 @@
 # bkndb for Go — Complete Guide & API Reference
 
+This guide targets the **0.3 API** in this checkout. Persistent databases use
+Redb. Old LSM files are not automatically migrated, even if they also end in
+`.bkndb`. The Go module requires **Go 1.22+** and a native library from the same
+checkout. `go get` installs the Go wrapper; it does not build that library.
+
+From the repository root:
+
+```bash
+cargo build --release -p bkndb-ffi
+```
+
+For a local source dependency in another Go project, use a module replacement:
+
+```bash
+go mod edit -replace github.com/BknOrg/bkndb/bindings/go/bkndb=/absolute/path/to/bkn-db/bindings/go/bkndb
+go get github.com/BknOrg/bkndb/bindings/go/bkndb
+```
+
+On Windows, put `target/release/bkndb_ffi.dll` next to your executable or in a
+directory searched by the loader. No C compiler is required for the Go wrapper.
+On Linux/macOS, cgo and a C compiler are required; use the repo's C header and
+ensure the linker can find `libbkndb_ffi.so` / `libbkndb_ffi.dylib`. Set
+`LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS) for runtime loading.
+See [the Go CI workflow](../../.github/workflows/go.yml) for test setup.
+
+SQL parameters are variadic (`db.SQL(query, value1, value2)`) or a single
+`map[string]any` for named parameters. Search hits expose `PK`, `Values`, and
+`Score`; cosine/dot scores sort highest first and Euclidean distances lowest
+first. Vector dimensions are inferred from stored vectors and must match.
+
+
 This document is the comprehensive guide and complete API reference for the `bkndb` Go package (`github.com/BknOrg/bkndb/bindings/go/bkndb`): architecture, installation, public APIs, transactions, graph queries, vector & full-text search, runnable examples, and performance guidelines.
 
 ---
@@ -31,7 +62,7 @@ This document is the comprehensive guide and complete API reference for the `bkn
 
 | Model | Purpose | Go APIs |
 | :--- | :--- | :--- |
-| **Relational / SQL** | Tabular records, structured queries, filtering, indexing | `db.Exec()`, `db.SQL()`, `db.SQLWithParams()` |
+| **Relational / SQL** | Tabular records, structured queries, filtering, indexing | `db.Exec()`, `db.SQL()`, `db.SQL()` |
 | **Property Graph** | Labeled nodes, directed edges, graph properties, traversal | `db.AddNode()`, `db.AddEdge()`, `db.Neighbors()`, `db.GraphQuery()` |
 | **Full-Text Search** | BM25 lexical text search across document chunks and conversations | `db.CreateFulltextIndex()`, `db.SearchText()` |
 | **Vector Search** | HNSW approximate nearest neighbor search (Cosine, Euclidean, Dot) | `db.CreateVectorIndex()`, `db.SearchVector()` |
@@ -200,9 +231,9 @@ for _, row := range res.Rows {
 ### Parameterized Queries
 Safely pass arguments to prevent SQL injection:
 ```go
-res, err := db.SQLWithParams(
+res, err := db.SQL(
     "SELECT id, content FROM messages WHERE role = $1 AND timestamp >= $2",
-    []any{"user", 1792600000},
+    "user", 1792600000,
 )
 ```
 
@@ -234,13 +265,16 @@ node, err := db.GetNode(agentID)
 if err != nil {
     log.Fatal(err)
 }
+if node == nil {
+    log.Fatal("node not found")
+}
 fmt.Printf("Node #%d [%s]: %v\n", node.ID, node.Label, node.Properties)
 
-// Update properties (setProps map[string]any, unsetKeys []string)
+// Update properties (setProps map[string]any, optional unsetKeys ...string)
 err = db.UpdateNode(agentID, map[string]any{
     "status": "ready",
     "last_seen": 1792681000,
-}, nil)
+})
 
 // Delete node (also removes connected edges)
 err = db.DeleteNode(agentID)
@@ -258,7 +292,7 @@ edgeID, err := db.CreateEdge(agentID, "CAN_USE", skillID, map[string]any{
 edge, err := db.GetEdge(edgeID)
 
 // Delete edge
-err = db.DeleteEdge(edgeID)
+_, err = db.DeleteEdge(edgeID)
 ```
 
 ### Graph Traversal (`Neighbors`)
@@ -395,8 +429,10 @@ if err := tx.Commit(); err != nil {
 ```go
 stats, err := db.Stats()
 if err == nil {
+    var fileBytes uint64
+    if stats.Storage != nil { fileBytes = stats.Storage.FileBytes }
     fmt.Printf("Nodes: %d, Edges: %d, Tables: %d, File Size: %d bytes\n",
-        stats.NodeCount(), stats.EdgeCount(), stats.TableCount(), stats.FileSizeBytes())
+        stats.Nodes, stats.Edges, len(stats.Tables), fileBytes)
 }
 ```
 
@@ -450,22 +486,29 @@ func NewAgentMemory(path string) (*AgentMemory, error) {
 	}
 
 	// Session messages table
-	db.Exec(`CREATE TABLE IF NOT EXISTS messages (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS messages (
 		id INT PRIMARY KEY AUTOINCREMENT,
 		session_id TEXT,
 		role TEXT,
 		content TEXT
 	)`)
-	db.CreateFulltextIndex("messages", "content")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = db.CreateFulltextIndex("messages", "content"); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return &AgentMemory{db: db}, nil
 }
 
 func (m *AgentMemory) SaveMessage(session, role, content string) error {
-	_, err := m.db.Exec(fmt.Sprintf(
-		"INSERT INTO messages (session_id, role, content) VALUES ('%s', '%s', '%s')",
+	_, err := m.db.Exec(
+		"INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
 		session, role, content,
-	))
+	)
 	return err
 }
 
@@ -476,7 +519,7 @@ func (m *AgentMemory) RecallRelevant(query string, limit int) ([]string, error) 
 	}
 	var out []string
 	for _, h := range hits {
-		out = append(out, fmt.Sprintf("%v: %v", h.Row["role"], h.Row["content"]))
+		out = append(out, fmt.Sprintf("%v: %v", h.Values["role"], h.Values["content"]))
 	}
 	return out, nil
 }
@@ -516,12 +559,12 @@ func main() {
 - `db.SQL(sql string, params ...any) (*QueryResult, error)`
 - `db.CreateNode(label string, props map[string]any) (uint64, error)`
 - `db.GetNode(id uint64) (*Node, error)`
-- `db.UpdateNode(id uint64, setProps map[string]any, unsetKeys []string) error`
+- `db.UpdateNode(id uint64, setProps map[string]any, unsetKeys ...string) error`
 - `db.DeleteNode(id uint64) error`
 - `db.CreateEdge(from uint64, edgeType string, to uint64, props map[string]any) (uint64, error)`
 - `db.GetEdge(id uint64) (*Edge, error)`
 - `db.DeleteEdge(id uint64) (bool, error)`
-- `db.Neighbors(nodeID uint64, dir Direction, edgeType string) ([]Neighbor, error)`
+- `db.Neighbors(nodeID uint64, dir Direction, edgeType ...string) ([]Neighbor, error)`
 - `db.GraphQuery(query string, params ...any) (*QueryResult, error)`
 - `db.CreateFulltextIndex(table, column string) error`
 - `db.SearchText(table, column, query string, limit int, matchAll ...bool) ([]ScoredRow, error)`

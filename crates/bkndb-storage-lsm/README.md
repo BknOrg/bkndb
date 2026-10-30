@@ -23,6 +23,12 @@
 
 ---
 
+## Selecting the backend
+
+Enable `lsm-backend` on `bkndb` and use `BknDb::open_lsm(path)` when the
+default Redb feature is also enabled. LSM and Redb use different file formats;
+the `.bkndb` extension does not make them interchangeable.
+
 ## Configuration (`LsmOptions`)
 
 You can customize the storage engine parameters when opening a database:
@@ -34,7 +40,7 @@ use bkndb_core::Db;
 let options = LsmOptions {
     memtable_flush_bytes: 32 * 1024 * 1024, // 32MB MemTable buffer for bulk writes
     compaction_trigger_files: 8,             // Trigger compaction after 8 SSTables
-    block_size: 4096,                        // 4KB SSTable block size
+    block_size_bytes: 4096,                  // 4KB SSTable block size
     ..Default::default()
 };
 
@@ -50,24 +56,23 @@ let db = Db::new(backend);
 Reclaims disk space occupied by deleted records (tombstones) and older overwritten versions:
 
 ```rust
-backend.force_compact()?;
+db.backend().force_compact()?;
 ```
 
 ### 2. Hot Online Backup
 Creates an atomic, consistent point-in-time copy to a new file:
 
 ```rust
-backend.backup_to("backups/snapshot_20261001.bkndb")?;
+db.backend().backup_to("backups/snapshot_20261001.bkndb")?;
 ```
 
 ### 3. Checksum Verification
 Scans the entire database file and verifies all CRC32 checksums:
 
 ```rust
-let report = backend.verify_integrity()?;
-if report.is_ok() {
-    println!("Database is 100% healthy!");
-}
+let report = db.backend().verify_integrity()?;
+println!("Verified {} blocks", report.blocks_verified);
+// Corruption is returned as an error; the report has no is_ok() method.
 ```
 
 ---

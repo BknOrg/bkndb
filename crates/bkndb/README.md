@@ -21,7 +21,7 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
 - **Integrated Full-Text & Vector Search:** Native BM25 inverted index and HNSW (Hierarchical Navigable Small World) vector index for fast semantic similarity search in the same database.
 - **Relational Indexing & Hybrid Joins:** Secondary indexing, fast prefix search, and zero-cost joining of graph node traversals with relational metadata tables.
 - **High-Volume Bulk Ingestion:** Batch synchronization API (`SyncBatch`) capable of ingesting 100,000+ nodes, edges, and rows in under a second.
-- **Cross-Platform:** Pure Rust core, with UniFFI mobile bindings (Android Kotlin AAR with 16KB page size compliance & iOS Swift XCFramework) and Python bindings (`pip install bkndb`).
+- **Cross-Platform:** Rust core with Python, Go, and UniFFI Kotlin/Swift bindings. The Android script builds native `.so` libraries with 16KB linker alignment; the iOS script packages an XCFramework.
 
 ---
 
@@ -45,7 +45,7 @@ Add `bkndb` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bkndb = "0.2"
+bkndb = "0.3"
 ```
 
 ### Cargo Feature Flags
@@ -59,9 +59,18 @@ bkndb = "0.2"
 | `search` | **Yes** | Full-text search (BM25) and exact / HNSW vector similarity search. |
 | `lsm-backend` | No | Optional append-only single-file LSM storage engine with zero-copy mmap. |
 
+`BknDb::open()` selects Redb with the default features. To use LSM while
+keeping the defaults, enable `lsm-backend` and call `BknDb::open_lsm()`.
+Redb and LSM files have different formats even when both use `.bkndb`;
+opening a file with the other backend does not migrate it.
+
+These examples target the 0.3 API in this checkout. To use this source tree
+directly, depend on `bkndb = { path = "../bkn-db/crates/bkndb" }` (adjust the path).
+
+
 Example for a minimal in-memory graph-only build:
 ```toml
-bkndb = { version = "0.2", default-features = false, features = ["mem-backend", "graph"] }
+bkndb = { version = "0.3", default-features = false, features = ["mem-backend", "graph"] }
 ```
 
 ---
@@ -147,14 +156,14 @@ use bkndb::graph::{Direction, NodeId};
 let g = db.graph();
 
 // Outgoing neighbors
-let colleagues = g.neighbors(NodeId(1), Direction::Out, Some("COLLABORATES_WITH"))?;
+let colleagues = g.neighbors_out(NodeId(1), "COLLABORATES_WITH")?;
 println!("Alice has {} collaborator(s)", colleagues.len());
 
 // Shortest Path (BFS)
 if let Some(path) = g.find_shortest_path(NodeId(1), NodeId(2), Direction::Out, None)? {
-    println!("Shortest path: {} hops", path.distance);
+    println!("Shortest path: {} hops", path.edges().len());
     for step in path.steps {
-        println!("  {:?} --[{}]--> {:?}", step.from, step.edge_type, step.to);
+        println!("  Node {:?}, via edge {:?}, type {:?}", step.node, step.via_edge, step.edge_type);
     }
 }
 
@@ -163,14 +172,14 @@ let impacted = g.traversal().start(NodeId(2)).incoming("COLLABORATES_WITH").max_
 println!("Total impacted nodes: {}", impacted.len());
 
 // Centrality (Top Hubs)
-let hubs = g.top_hubs(5)?;
-for hub in hubs {
-    println!("Hub: Node {:?}, Degree: {}", hub.node_id, hub.degree);
+let hubs = g.top_hubs(5, Direction::In, None)?;
+for (node_id, degree) in hubs {
+    println!("Hub: Node {:?}, Degree: {}", node_id, degree);
 }
 
 // Recursive Cascading Node Deletion
-let cleanup_stats = g.cascade_delete(NodeId(2))?;
-println!("Deleted {} nodes, {} edges", cleanup_stats.nodes_deleted, cleanup_stats.edges_deleted);
+let cleanup_stats = g.cascade_delete(NodeId(2), "CONTAINS")?;
+println!("Deleted {} nodes and their incident edges", cleanup_stats.len());
 ```
 
 ---
@@ -204,29 +213,39 @@ for row in res.rows {
 ### 6. Full-Text (BM25) and Vector Search (HNSW)
 
 ```rust
-use bkndb::relational::{pack_vector, VectorIndexOptions, VectorMetric};
+use bkndb::graph::Properties;
+use bkndb::relational::{
+    pack_vector, ColumnKind, ColumnSchema, TableSchema,
+    VectorIndexOptions, VectorMetric, VectorSearchOptions,
+};
 
-let mut rel = db.relational();
+let rel = db.relational();
+let articles = TableSchema::builder("articles")
+    .column(ColumnSchema::new("id", ColumnKind::Int))
+    .column(ColumnSchema::new("content", ColumnKind::Str))
+    .column(ColumnSchema::new("embedding", ColumnKind::Bytes))
+    .primary_key("id").auto_increment().build()?;
+rel.create_table(&articles)?;
+rel.table(&articles).insert(Properties::from([
+    ("content".into(), "Hybrid database in Rust".into()),
+    ("embedding".into(), pack_vector(&[0.1, 0.8, 0.3])),
+]))?;
 
-// Full-Text Search (BM25)
-rel.create_fulltext_index("documents", "content")?;
-let text_hits = rel.search_text("documents", "content", "memory-mapped zero-copy", 5, true, None)?;
-for hit in text_hits {
-    println!("Score: {:.2}, Snippet: {:?}", hit.score, hit.snippet);
+rel.create_fulltext_index("articles", "content")?;
+// true requires every query term; it does not enable highlighting.
+for hit in rel.search_text("articles", "content", "hybrid rust", 5, true, None)? {
+    println!("BM25: {:.2}, Row: {:?}", hit.score, hit.row);
 }
 
-// HNSW Vector Indexing & Search
-rel.create_vector_index("documents", "embedding", VectorIndexOptions {
-    metric: VectorMetric::Cosine,
-    m: 16,
-    ef_construction: 100,
-    ef_search: 50,
+rel.create_vector_index("articles", "embedding", VectorIndexOptions {
+    metric: VectorMetric::Cosine, m: 16, ef_construction: 100,
 })?;
-
-let query_vec = vec![0.05, -0.12, 0.44, /* ... */];
-let vec_hits = rel.search_vector("documents", "embedding", &query_vec, 5, VectorMetric::Cosine, None)?;
-for hit in vec_hits {
-    println!("Row PK: {:?}, Distance: {:.4}", hit.row.pk, hit.distance);
+let query = [0.1, 0.9, 0.2];
+for hit in rel.search_vector_with(
+    "articles", "embedding", &query, 5, VectorMetric::Cosine, None,
+    VectorSearchOptions { exact: false, ef_search: Some(50) },
+)? {
+    println!("PK: {:?}, Cosine similarity: {:.4}", hit.row.pk, hit.score);
 }
 ```
 
@@ -241,7 +260,7 @@ let nodes = vec![NodeId(1), NodeId(2)];
 let joined = db.join_nodes_with_table(&nodes, &schema)?;
 
 for item in joined {
-    println!("Node {:?} -> Row: {:?}", item.node_id, item.row);
+    println!("Node {:?} -> Row: {:?}", item.id, item.row);
 }
 ```
 
@@ -252,22 +271,31 @@ for item in joined {
 Ingest hundreds of thousands of records in a single atomic transaction:
 
 ```rust
-use bkndb::hybrid::{SyncBatch, NewNode};
+use bkndb::{NodeRef, SyncBatch};
+use bkndb::graph::Properties;
+use bkndb::relational::{ColumnKind, ColumnSchema, TableSchema};
+
+let files = TableSchema::builder("files")
+    .column(ColumnSchema::new("path", ColumnKind::Str))
+    .column(ColumnSchema::new("lines", ColumnKind::Int))
+    .primary_key("path")
+    .build()?;
+db.relational().create_table(&files)?;
 
 let mut batch = SyncBatch::new();
-
-let n0 = batch.add_node("Service", [("name".to_string(), "auth".into())]);
-let n1 = batch.add_node("Service", [("name".to_string(), "billing".into())]);
-batch.add_edge(NewNode(n0), "DEPENDS_ON", NewNode(n1), []);
-
-batch.add_row("service_metrics", [
-    ("service".to_string(), "auth".into()),
-    ("uptime".to_string(), 99.98.into()),
-]);
+// New node references are zero-based positions in batch.nodes.
+batch.add_node("Module", Properties::from([("name".into(), "engine".into())]));
+batch.add_node("Function", Properties::from([("name".into(), "start".into())]));
+batch.add_linked_edge(NodeRef::New(0), "DECLARES", NodeRef::New(1), Properties::new());
+batch.add_row(&files, Properties::from([
+    ("path".into(), "src/engine.rs".into()),
+    ("lines".into(), 350.into()),
+]));
 
 let result = db.sync_batch(batch)?;
+let rows: usize = result.relational_pks.iter().map(Vec::len).sum();
 println!("Committed: {} nodes, {} edges, {} rows",
-    result.nodes_created.len(), result.edges_created.len(), result.rows_inserted);
+    result.node_ids.len(), result.edge_ids.len(), rows);
 ```
 
 ---
@@ -275,19 +303,19 @@ println!("Committed: {} nodes, {} edges, {} rows",
 ### 9. Storage Maintenance & Operations
 
 ```rust
-// Force SSTable compaction to reclaim dead space
+// Redb-backed BknDb::open handle; compact in place.
 db.compact()?;
 
-// Online hot backup
-db.backup_to("backup.bkndb")?;
+// Destination must not already exist.
+db.backup_to("app_backup.bkndb")?;
 
-// Verify checksums of all blocks
+// Failure is returned as Err(BknError::Corruption(...)), not a report flag.
 let report = db.verify_integrity()?;
-assert!(report.is_ok());
+println!("Verified {} entries", report.entries);
 
-// Inspect disk metrics
-let stats = db.storage_stats()?;
-println!("File size: {} bytes, Reclaimable: {} bytes", stats.file_size, stats.reclaimable_bytes);
+let stats = db.storage_stats()?; // RedbStats with the default backend
+println!("File: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
+    stats.file_bytes, stats.table_count, stats.stored_bytes, stats.reclaimable_bytes);
 ```
 
 ---
@@ -295,7 +323,7 @@ println!("File size: {} bytes, Reclaimable: {} bytes", stats.file_size, stats.re
 ## Detailed Documentation
 
 For exhaustive API documentation, performance recipes, and advanced patterns, refer to:
-- **[wiki-rust.md](../../docs/wikis/wiki-rust.md)**: Complete Rust user guide (1,400+ lines).
+- **[wiki-rust.md](../../docs/wikis/wiki-rust.md)**: Rust user guide for the 0.3 API.
 - **[wiki-py.md](../../docs/wikis/wiki-py.md)**: Complete Python user guide.
 
 ---

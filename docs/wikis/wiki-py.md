@@ -1,5 +1,17 @@
 # bkndb for Python — Complete Guide & API Reference
 
+
+This guide targets the **0.3 API** in this checkout. Disk databases use Redb;
+legacy LSM tuning keywords are accepted for compatibility but are ignored.
+Old LSM `.bkndb` files are not automatically converted to the Redb format.
+Examples after the quick start assume an open `db` and the named tables,
+nodes, and application helpers already exist. Generate embeddings in your
+application; BknDb stores and searches them.
+
+Text/vector hits expose `hit.row` and `hit.score`. Cosine/dot scores sort
+highest first; Euclidean scores are distances and sort lowest first.
+HNSW dimensions are inferred from the stored vectors and must stay consistent.
+
 This document is the comprehensive guide and complete API reference for the `bkndb` Python package: what it does, how to use it, every public class, method, function, runnable examples, and performance characteristics.
 
 ---
@@ -70,7 +82,18 @@ pip install bkndb                     # Core wheel (Linux, Windows, macOS)
 pip install "bkndb[pandas,networkx]"  # With Pandas and NetworkX support
 ```
 
-One pre-built wheel per OS/architecture serves every Python 3.x version via UniFFI's native ctypes interface.
+The wheel uses UniFFI's ctypes interface and does not depend on a specific
+CPython minor-version ABI; the package still requires Python 3.10 or later.
+
+To use the **current checkout** instead of a registry release, activate a
+virtual environment, ensure Rust stable is installed, and run from the repo root:
+
+```bash
+python -m pip install "./bindings/python[test,pandas,networkx]"
+```
+
+See [Building from Source](../../bindings/python/README.md#development--building-from-source)
+for editable builds and running tests against the installed package.
 
 ---
 
@@ -139,7 +162,7 @@ with bkndb.open("my_data.bkndb") as db:
     # Operations
     pass
 
-# 3. Tuning options (LSM compatibility options are safely accepted)
+# 3. Legacy options are accepted but ignored by the current Redb FFI backend.
 with bkndb.open(
     "app.bkndb",
     memtable_flush_bytes=32 * 1024 * 1024, # Accepted for compatibility
@@ -189,16 +212,16 @@ db.delete_node(david)
 from bkndb import Direction
 
 # Outgoing neighbors
-friends = db.neighbors(alice, Direction.OUTGOING, edge_type="KNOWS")
+friends = db.neighbors(alice, Direction.OUT, edge_type="KNOWS")
 
 # Multi-hop radius traversal
 for hit in db.traverse(alice, direction=Direction.BOTH, max_depth=3):
     print(f"Hop {hit.depth}: Node {hit.node_id}")
 
 # BFS Shortest Path (minimum hop count)
-path = db.find_shortest_path(alice, charlie, edge_type="KNOWS")
+path = db.find_shortest_path(alice, charlie, edge_types=["KNOWS"])
 if path:
-    print(f"Shortest path length: {path.distance} hops")
+    print(f"Shortest path length: {len(path.edge_ids)} hops")
     print(f"Steps: {path.node_ids}")
 
 # Dijkstra Weighted Path (minimum cost)
@@ -212,8 +235,8 @@ for hub in top_nodes:
     print(f"Node {hub.node_id} has {hub.degree} connections")
 
 # Cascading Delete
-stats = db.cascade_delete(alice)
-print(f"Deleted {stats.nodes_deleted} nodes and {stats.edges_deleted} edges")
+deleted_ids = db.cascade_delete(alice, "CONTAINS")
+print(f"Deleted {len(deleted_ids)} nodes and their incident edges")
 ```
 
 ---
@@ -225,7 +248,7 @@ print(f"Deleted {stats.nodes_deleted} nodes and {stats.edges_deleted} edges")
 all_people = db.nodes_by_label("Person")
 total_people = db.count_nodes("Person")
 
-# Property Indexing (speeds up find_nodes to O(1) index lookup)
+# Property indexing for faster lookups
 db.create_node_index("Person", "email")
 
 # Lookup
@@ -278,10 +301,10 @@ pks = users.insert_many([
 users.upsert({"id": pk, "email": "alice_updated@example.com", "username": "alice"})
 
 # Update rows matching condition
-users.update_rows(set={"age": 21}, where=col("username") == "bob")
+users.update(set={"age": 21}, where=col("username") == "bob")
 
 # Delete rows
-users.delete_rows(where=col("age") < 18)
+users.delete(where=col("age") < 18)
 ```
 
 ---
@@ -294,7 +317,7 @@ from bkndb import col
 # Query builder filters
 cond = (
     (col("age") >= 18) &
-    (col("email").endswith("@company.com")) &
+    (col("email").like("%@company.com")) &
     col("metadata.role").is_in(["admin", "editor"])
 )
 
@@ -328,7 +351,7 @@ from bkndb import Agg
     Agg.min("age"),
     Agg.max("age"),
 ])
-print(stats["count"], stats["avg_age"])
+print(stats.values)  # Values follow the requested aggregate order.
 
 # Grouped aggregations
 by_role = db.aggregate(
@@ -337,7 +360,7 @@ by_role = db.aggregate(
     group_by=["metadata.role"],
 )
 for item in by_role:
-    print(item["metadata.role"], item["count"])
+    print(item.group, item.values)
 ```
 
 ---
@@ -429,19 +452,19 @@ for h in hits:
 import bkndb
 
 # 1. Insert vector embedding (using compact pack_vector)
-embedding = [0.12, -0.45, 0.78, ...]
+embedding = [0.12, -0.45, 0.78]
 db.insert("documents", {
     "title": "LLM Guide",
     "emb": bkndb.pack_vector(embedding),
 })
 
-# 2. Build HNSW index for sub-millisecond retrieval on large collections
+# 2. Build an HNSW index for approximate retrieval
 db.create_vector_index("documents", "emb", metric="cosine", m=16, ef_construction=200)
 
 # 3. Perform approximate nearest neighbor search
 results = db.search_vector("documents", "emb", embedding, limit=5, metric="cosine")
 for r in results:
-    print(f"Document PK: {r.row.pk}, Distance: {r.distance:.4f}")
+    print(f"Document PK: {r.row.pk}, Similarity: {r.score:.4f}")
 ```
 
 ---
@@ -456,12 +479,14 @@ with bkndb.open("production.bkndb") as db:
     # 2. Hot Online Backup (consistent snapshot copy to destination)
     db.backup("backups/snapshot_daily.bkndb")
 
-    # 3. Integrity Check
+    # 3. Integrity Check (raises CorruptionError on failure)
     db.verify_integrity()
 
     # 4. Storage Metrics (Redb engine metrics)
     stats = db.stats()
     st = stats.storage
+    # StorageStats keeps legacy field names for compatibility with older bindings.
+    # On Redb, sstable_count/bytes/entries map to table/stored byte/entry counts.
     print(f"File size: {st.file_bytes} bytes, Active tables: {st.sstable_count}")
     print(f"Stored bytes: {st.sstable_bytes}, Stored entries: {st.sstable_entries}")
     print(f"Reclaimable space: {st.reclaimable_bytes} bytes")

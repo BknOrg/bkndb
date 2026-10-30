@@ -18,7 +18,7 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
 ```
                       ┌────────────────────────────────────────┐
                       │            Client Interfaces           │
-                      │  Rust Crate  •  Python  •  Kotlin/AAR  │
+                      │  Rust • Python • Go • Kotlin/Swift  │
                       │  Swift/iOS   •  CLI (Coming Soon)      │
                       └───────────────────┬────────────────────┘
                                           │
@@ -55,12 +55,15 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
 4. **Sub-Millisecond Graph Traversal:** Built-in BFS shortest path, Dijkstra weighted path, blast radius traversal (impact analysis), in-degree centrality (top hubs), and cascading node deletion.
 5. **Built-in Full-Text & Vector Search:** Native BM25 inverted index and HNSW (Hierarchical Navigable Small World) vector index for fast semantic similarity search in the same database.
 6. **Zero-Cost Hybrid Joins:** Effortlessly join graph traversal results with relational metadata tables in one read transaction.
-7. **High-Volume Bulk Ingestion:** `SyncBatch` API capable of ingesting 100,000+ nodes, edges, and rows in under a second with block counter reservation.
-8. **Multi-Language Support:** First-class Rust crate, Python package (`pip install bkndb` with Pandas & NetworkX support), and UniFFI mobile bindings (Android Kotlin AAR with 16KB page size compliance & iOS Swift XCFramework).
+7. **High-Volume Bulk Ingestion:** `SyncBatch` API uses block counter reservation to reduce per-record overhead when ingesting nodes, edges, and rows.
+8. **Multi-Language Support:** Rust, Python (with Pandas & NetworkX support), Go via C ABI, and UniFFI Kotlin/Swift bindings. Android builds produce native libraries for app packaging; the iOS script packages an XCFramework.
 
 ---
 
 ## Performance Benchmark
+
+These recorded results are workload-specific LSM measurements, not measurements
+of the default Redb backend or performance guarantees for the current release.
 
 In real-world code intelligence workloads (call graph traversal & AST storage) comparing `bkndb` (native `.bkndb` LSM engine) against SQLite (WAL mode):
 
@@ -82,7 +85,7 @@ Add `bkndb` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bkndb = "0.2"
+bkndb = "0.3"
 ```
 
 #### Cargo Feature Flags
@@ -96,6 +99,15 @@ bkndb = "0.2"
 | `search` | **Yes** | Full-text search (BM25) and exact / HNSW vector similarity search. |
 | `lsm-backend` | No | Optional append-only single-file LSM storage engine with zero-copy mmap. |
 
+`BknDb::open()` selects Redb with the default features. To use LSM while
+keeping the defaults, enable `lsm-backend` and call `BknDb::open_lsm()`.
+Redb and LSM files have different formats even when both use `.bkndb`;
+opening a file with the other backend does not migrate it.
+
+These examples target the 0.3 API in this checkout. To use this source tree
+directly, depend on `bkndb = { path = "../bkn-db/crates/bkndb" }` (adjust the path).
+
+
 ### Python
 
 ```bash
@@ -105,17 +117,20 @@ pip install "bkndb[pandas,networkx]"  # With Pandas and NetworkX support
 
 ### Mobile (Android & iOS)
 
-- **Android (Kotlin):** Pre-compiled AAR generated via UniFFI, strictly compliant with Android 15+ 16KB memory page size. See [scripts/build_android.ps1](scripts/build_android.ps1).
+- **Android (Kotlin):** Build the native `.so` with 16KB linker alignment and package it with the generated Kotlin binding; the script does not assemble an AAR. See [scripts/build_android.ps1](scripts/build_android.ps1).
 - **iOS (Swift):** Packaged XCFramework for iOS devices and simulators. See [scripts/build_ios.sh](scripts/build_ios.sh) and [bindings/bkndb_ffi.swift](bindings/bkndb_ffi.swift).
 
 ---
 
 ## Quick Start (Rust)
 
+Use a new database file for this example; running it again would insert the
+same unique email. Create parent directories before opening nested paths.
+
 ```rust
 use bkndb::BknDb;
 use bkndb::relational::{TableSchema, ColumnSchema, ColumnKind};
-use bkndb::graph::{Direction, Properties};
+use bkndb::graph::Properties;
 use bkndb::value::PropValue;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -135,7 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.relational().create_table(&users_schema)?;
 
     // 3. Atomically write relational rows and graph entities in ONE transaction
-    db.write_tx(|b| {
+    let (alice_node, _bob_node) = db.write_tx(|b| {
         // Relational table insert
         let mut rel = b.relational();
         let mut row = Properties::new();
@@ -158,12 +173,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("since".to_string(), 2026.into()),
         ]))?;
 
-        Ok(())
+        Ok((alice_node, bob_node))
     })?;
 
     // 4. Graph traversal
     let g = db.graph();
-    let neighbors = g.neighbors(bkndb::graph::NodeId(1), Direction::Out, Some("KNOWS"))?;
+    let neighbors = g.neighbors_out(alice_node, "KNOWS")?;
     println!("Alice knows {} person(s)", neighbors.len());
 
     // 5. Declarative Cypher-style query
@@ -226,18 +241,20 @@ with bkndb.open("app_data.bkndb") as db:
 BknDb provides strict serializable writes with concurrent snapshot reads (`ReadTx`). Within `db.write_tx`, all modifications across tables, graph nodes, edges, and raw key-value pairs are staged together:
 
 ```rust
+use bkndb::TableSpec;
+
+db.relational().sql(
+    "CREATE TABLE IF NOT EXISTS audit_log (id INT PRIMARY KEY AUTOINCREMENT, event TEXT, ref_id INT)", (),
+)?;
 db.write_tx(|b| {
-    let mut g = b.graph();
-    let mut rel = b.relational();
-    let mut kv = b.kv();
-
-    let node = g.create_node("Document", Properties::from([("title".to_string(), "Doc 1".into())]))?;
-    rel.table_named("audit_log")?.insert(Properties::from([
-        ("event".to_string(), "node_created".into()),
-        ("ref_id".to_string(), PropValue::Int(node.0 as i64)),
+    let node = b.graph().create_node("Document", Properties::from([
+        ("title".into(), "Doc 1".into()),
     ]))?;
-    kv.set(b"settings", b"last_updated", b"2026-10-01")?;
-
+    b.relational().table_named("audit_log")?.insert(Properties::from([
+        ("event".into(), "node_created".into()),
+        ("ref_id".into(), PropValue::Int(node.0 as i64)),
+    ]))?;
+    b.kv().put(TableSpec("settings"), b"last_updated", b"2026-10-01")?;
     Ok(())
 })?;
 ```
@@ -248,18 +265,21 @@ If an error occurs or the closure returns `Err`, all changes are rolled back aut
 
 ### 2. Graph Algorithms & Analysis
 
-BknDb contains built-in graph algorithms executed directly over in-memory indexes without materializing the whole graph:
+BknDb traverses graph adjacency indexes through the selected backend.
+The following fragments assume existing node IDs and an open `db`:
 
 ```rust
+use bkndb::graph::Direction;
+
 let g = db.graph();
 
 // BFS Shortest Path (hop distance)
-if let Some(path) = g.find_shortest_path(start, target, Direction::Out, Some("CALLS"))? {
-    println!("Shortest path: {} hops", path.distance);
+if let Some(path) = g.find_shortest_path(start, target, Direction::Out, Some(&["CALLS"]))? {
+    println!("Shortest path: {} hops", path.edges().len());
 }
 
 // Dijkstra Weighted Shortest Path
-if let Some(route) = g.find_weighted_path(start, target, "latency_ms", Direction::Out, None)? {
+if let Some(route) = g.find_weighted_path(start, target, Direction::Out, None, "latency_ms", 1.0)? {
     println!("Total cost: {}", route.cost);
 }
 
@@ -268,14 +288,14 @@ let callers = g.traversal().start(target).incoming("CALLS").max_depth(4).run()?;
 println!("Impacted entities: {}", callers.len());
 
 // Top Degree Hubs (Centrality Analysis)
-let hubs = g.top_hubs(5)?;
-for hub in hubs {
-    println!("Hub Node {:?} with {} connections", hub.node_id, hub.degree);
+let hubs = g.top_hubs(5, Direction::In, None)?;
+for (node_id, degree) in hubs {
+    println!("Hub Node {:?} with {} connections", node_id, degree);
 }
 
 // Recursive Cascading Node Deletion
-let stats = g.cascade_delete(root_node)?;
-println!("Cleaned up {} nodes and {} edges", stats.nodes_deleted, stats.edges_deleted);
+let stats = g.cascade_delete(root_node, "CONTAINS")?;
+println!("Deleted {} nodes and their incident edges", stats.len());
 ```
 
 ---
@@ -285,29 +305,39 @@ println!("Cleaned up {} nodes and {} edges", stats.nodes_deleted, stats.edges_de
 BknDb includes native search capabilities built right into the relational and storage layers:
 
 ```rust
-use bkndb::relational::{pack_vector, VectorIndexOptions, VectorMetric};
+use bkndb::graph::Properties;
+use bkndb::relational::{
+    pack_vector, ColumnKind, ColumnSchema, TableSchema,
+    VectorIndexOptions, VectorMetric, VectorSearchOptions,
+};
 
-let mut rel = db.relational();
+let rel = db.relational();
+let articles = TableSchema::builder("articles")
+    .column(ColumnSchema::new("id", ColumnKind::Int))
+    .column(ColumnSchema::new("content", ColumnKind::Str))
+    .column(ColumnSchema::new("embedding", ColumnKind::Bytes))
+    .primary_key("id").auto_increment().build()?;
+rel.create_table(&articles)?;
+rel.table(&articles).insert(Properties::from([
+    ("content".into(), "Hybrid database in Rust".into()),
+    ("embedding".into(), pack_vector(&[0.1, 0.8, 0.3])),
+]))?;
 
-// 1. Full-Text Search (BM25)
 rel.create_fulltext_index("articles", "content")?;
-let text_hits = rel.search_text("articles", "content", "hybrid database rust", 5, true, None)?;
-for hit in text_hits {
-    println!("Score: {:.2}, Snippet: {:?}", hit.score, hit.snippet);
+// true requires every query term; it does not enable highlighting.
+for hit in rel.search_text("articles", "content", "hybrid rust", 5, true, None)? {
+    println!("BM25: {:.2}, Row: {:?}", hit.score, hit.row);
 }
 
-// 2. Vector Search (HNSW Approximate Nearest Neighbor)
 rel.create_vector_index("articles", "embedding", VectorIndexOptions {
-    metric: VectorMetric::Cosine,
-    m: 16,
-    ef_construction: 100,
-    ef_search: 50,
+    metric: VectorMetric::Cosine, m: 16, ef_construction: 100,
 })?;
-
-let query_embedding = vec![0.021, -0.412, 0.884, /* ... */];
-let vector_hits = rel.search_vector("articles", "embedding", &query_embedding, 5, VectorMetric::Cosine, None)?;
-for hit in vector_hits {
-    println!("Row PK: {:?}, Cosine Distance: {:.4}", hit.row.pk, hit.distance);
+let query = [0.1, 0.9, 0.2];
+for hit in rel.search_vector_with(
+    "articles", "embedding", &query, 5, VectorMetric::Cosine, None,
+    VectorSearchOptions { exact: false, ef_search: Some(50) },
+)? {
+    println!("PK: {:?}, Cosine similarity: {:.4}", hit.row.pk, hit.score);
 }
 ```
 
@@ -315,17 +345,18 @@ for hit in vector_hits {
 
 ### 4. Zero-Cost Hybrid Joins
 
-Join graph traversal results directly with relational table metadata in a single read transaction:
+Join node IDs with relational metadata in one read transaction. To include
+the traversal in the same snapshot, perform both inside `db.read_tx`:
 
 ```rust
-// Traverse graph to find friends
-let friend_nodes = db.graph().neighbors(user_node, Direction::Out, Some("FRIENDS"))?;
-
-// Join node IDs directly with the 'profiles' table where PK == NodeId
-let profiles = db.join_nodes_with_table(&friend_nodes, &profiles_schema)?;
-
+let profiles = db.read_tx(|tx| {
+    let friend_nodes: Vec<_> = tx.graph().neighbors_out(user_node, "FRIENDS")?
+        .into_iter().map(|(node, _edge)| node).collect();
+    // The profiles table's integer primary key must equal the graph node ID.
+    tx.join_nodes_with_table(&friend_nodes, &profiles_schema)
+})?;
 for item in profiles {
-    println!("Node {:?} -> Profile: {:?}", item.node_id, item.row);
+    println!("Node {:?} -> Profile: {:?}", item.id, item.row);
 }
 ```
 
@@ -333,29 +364,36 @@ for item in profiles {
 
 ### 5. High-Volume Bulk Synchronization (`SyncBatch`)
 
-Ingest hundreds of thousands of records in a single transactional batch without per-record atomic counter overhead:
+Ingest graph and relational data in one transaction. Rows are upserted
+by primary key; graph entities are newly created. Node references below use
+zero-based positions in the batch:
 
 ```rust
-use bkndb::hybrid::{SyncBatch, SyncNode, SyncEdge, NewNode};
+use bkndb::{NodeRef, SyncBatch};
+use bkndb::graph::Properties;
+use bkndb::relational::{ColumnKind, ColumnSchema, TableSchema};
+
+let files = TableSchema::builder("files")
+    .column(ColumnSchema::new("path", ColumnKind::Str))
+    .column(ColumnSchema::new("lines", ColumnKind::Int))
+    .primary_key("path")
+    .build()?;
+db.relational().create_table(&files)?;
 
 let mut batch = SyncBatch::new();
-
-// Add nodes (NewNode index represents index within this batch)
-let n0 = batch.add_node("Module", [("name".to_string(), "engine".into())]);
-let n1 = batch.add_node("Function", [("name".to_string(), "start".into())]);
-
-// Add edge referencing newly added nodes
-batch.add_edge(NewNode(n0), "DECLARES", NewNode(n1), []);
-
-// Add relational rows
-batch.add_row("files", [
-    ("path".to_string(), "src/engine.rs".into()),
-    ("lines".to_string(), 350.into()),
-]);
+// New node references are zero-based positions in batch.nodes.
+batch.add_node("Module", Properties::from([("name".into(), "engine".into())]));
+batch.add_node("Function", Properties::from([("name".into(), "start".into())]));
+batch.add_linked_edge(NodeRef::New(0), "DECLARES", NodeRef::New(1), Properties::new());
+batch.add_row(&files, Properties::from([
+    ("path".into(), "src/engine.rs".into()),
+    ("lines".into(), 350.into()),
+]));
 
 let result = db.sync_batch(batch)?;
-println!("Batch committed: {} nodes, {} edges, {} rows",
-    result.nodes_created.len(), result.edges_created.len(), result.rows_inserted);
+let rows: usize = result.relational_pks.iter().map(Vec::len).sum();
+println!("Committed: {} nodes, {} edges, {} rows",
+    result.node_ids.len(), result.edge_ids.len(), rows);
 ```
 
 ---
@@ -365,19 +403,19 @@ println!("Batch committed: {} nodes, {} edges, {} rows",
 The `.bkndb` storage engine provides operational primitives for continuous maintenance:
 
 ```rust
-// Reclaim dead space from deleted/overwritten SSTables
+// Redb-backed BknDb::open handle; compact in place.
 db.compact()?;
 
-// Online hot backup while database stays open for reads/writes
-db.backup_to("backups/app_backup.bkndb")?;
+// Destination must not already exist.
+db.backup_to("app_backup.bkndb")?;
 
-// Verify checksum integrity across all blocks
+// Failure is returned as Err(BknError::Corruption(...)), not a report flag.
 let report = db.verify_integrity()?;
-assert!(report.is_ok());
+println!("Verified {} entries", report.entries);
 
-// Inspect disk usage
-let stats = db.storage_stats()?;
-println!("File size: {} bytes, Reclaimable: {} bytes", stats.file_size, stats.reclaimable_bytes);
+let stats = db.storage_stats()?; // RedbStats with the default backend
+println!("File: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
+    stats.file_bytes, stats.table_count, stats.stored_bytes, stats.reclaimable_bytes);
 ```
 
 ---
@@ -400,6 +438,9 @@ println!("File size: {} bytes, Reclaimable: {} bytes", stats.file_size, stats.re
 
 - **Rust Full Guide & API Reference:** [docs/wikis/wiki-rust.md](docs/wikis/wiki-rust.md)
 - **Python Full Guide & API Reference:** [docs/wikis/wiki-py.md](docs/wikis/wiki-py.md)
+- **Go Guide:** [docs/wikis/wiki-go.md](docs/wikis/wiki-go.md)
+- **Android/Kotlin Guide:** [docs/wikis/wiki-kotlin.md](docs/wikis/wiki-kotlin.md)
+- **Swift/iOS Guide:** [docs/wikis/wiki-swift.md](docs/wikis/wiki-swift.md)
 
 ---
 

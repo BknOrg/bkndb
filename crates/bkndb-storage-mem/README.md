@@ -6,7 +6,7 @@
 
 **High-throughput, concurrent in-memory storage engine backend for BknDb.**
 
-`bkndb-storage-mem` implements the `StorageEngine` trait using purely in-memory data structures. It provides full transactional snapshot isolation, zero disk I/O, and microsecond-level query latencies.
+`bkndb-storage-mem` implements the `StorageBackend` trait using purely in-memory data structures. It provides full transactional snapshot isolation, zero disk I/O, and microsecond-level query latencies.
 
 Ideal for:
 - Fast unit testing and integration test suites.

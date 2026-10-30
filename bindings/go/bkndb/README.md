@@ -1,8 +1,39 @@
 # bkndb-go
 
+This guide targets the **0.3 API** in this checkout. Persistent databases use
+Redb. Old LSM files are not automatically migrated, even if they also end in
+`.bkndb`. The Go module requires **Go 1.22+** and a native library from the same
+checkout. `go get` installs the Go wrapper; it does not build that library.
+
+From the repository root:
+
+```bash
+cargo build --release -p bkndb-ffi
+```
+
+For a local source dependency in another Go project, use a module replacement:
+
+```bash
+go mod edit -replace github.com/BknOrg/bkndb/bindings/go/bkndb=/absolute/path/to/bkn-db/bindings/go/bkndb
+go get github.com/BknOrg/bkndb/bindings/go/bkndb
+```
+
+On Windows, put `target/release/bkndb_ffi.dll` next to your executable or in a
+directory searched by the loader. No C compiler is required for the Go wrapper.
+On Linux/macOS, cgo and a C compiler are required; use the repo's C header and
+ensure the linker can find `libbkndb_ffi.so` / `libbkndb_ffi.dylib`. Set
+`LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS) for runtime loading.
+See [the Go CI workflow](../../../.github/workflows/go.yml) for test setup.
+
+SQL parameters are variadic (`db.SQL(query, value1, value2)`) or a single
+`map[string]any` for named parameters. Search hits expose `PK`, `Values`, and
+`Score`; cosine/dot scores sort highest first and Euclidean distances lowest
+first. Vector dimensions are inferred from stored vectors and must match.
+
+
 Official Go bindings for **BknDb** — Embedded hybrid graph-relational database engine with ACID transactions, BM25 full-text search, and HNSW vector similarity search.
 
-Designed following the `/ponytail` philosophy: **zero external dependencies** (standard library only), lightweight, and blazing fast.
+The Go wrapper uses the standard library only and requires the matching BknDb native library at runtime.
 
 ---
 

@@ -48,7 +48,7 @@ All data models share **one atomic ACID transaction**: `db.write_tx(|b| { … })
 ### Best Used For:
 - Embedded Rust applications (CLIs, desktop/Tauri, local services) requiring rich relational data and graph topologies without external database servers.
 - Knowledge Graph / GraphRAG, code intelligence (AST → function calls → file dependencies), and local agentic memory.
-- Mobile and embedded systems via UniFFI bindings (Android Kotlin AAR & iOS Swift XCFramework) sharing the same storage core.
+- Mobile applications via UniFFI Kotlin/Swift bindings sharing the same storage core. Package the Android native libraries into your app; use the iOS script to assemble an XCFramework.
 
 ### Not Intended For:
 - Multiple concurrent processes writing to the same file (the database file is locked exclusively by one process).
@@ -60,13 +60,13 @@ All data models share **one atomic ACID transaction**: `db.write_tx(|b| { … })
 
 ## 2. Installation and Feature Flags
 
-Requires **Rust 1.88+** (edition 2024).
+Use a current **Rust stable** toolchain with edition 2024 support. The workspace does not declare a `rust-version` minimum.
 
 Add `bkndb` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bkndb = "0.2"
+bkndb = "0.3"
 ```
 
 ### Feature Flags
@@ -79,6 +79,15 @@ bkndb = "0.2"
 | `relational-layer` | **Yes** | Relational tables (`bkndb::relational`) and SQL parser. |
 | `search` | **Yes** | BM25 full-text and HNSW vector search (requires `relational-layer`). |
 | `lsm-backend` | No | Optional LSM-tree storage backend (`LsmStorageBackend`, `BknDb::open_lsm`). |
+
+`BknDb::open()` selects Redb with the default features. To use LSM while
+keeping the defaults, enable `lsm-backend` and call `BknDb::open_lsm()`.
+Redb and LSM files have different formats even when both use `.bkndb`;
+opening a file with the other backend does not migrate it.
+
+These examples target the 0.3 API in this checkout. To use this source tree
+directly, depend on `bkndb = { path = "../bkn-db/crates/bkndb" }` (adjust the path).
+
 
 All core modules are re-exported at the crate root (`pub use bkndb_core::*`), including `bkndb::graph`, `bkndb::relational`, `bkndb::value`, `bkndb::lang`, `bkndb::kv`, `bkndb::hybrid`, and `bkndb::db`.
 
@@ -94,11 +103,11 @@ BknDb  ──Deref──▶  Db<RedbStorageBackend>
                      ├── .write_tx(|b| …) / .begin_write()   (cross-model ACID writes)
                      ├── .read_tx(|r| …)                     (cross-model snapshot reads)
                      ├── .sync_batch(SyncBatch)              (high-volume bulk ingestion)
-                     └── .stats()                            (storage metrics)
+                     └── .stats()                            (logical entity/row counts)
 ```
 
 - **`BknDb`**: The primary entry point for persistent on-disk databases. It wraps `Db<RedbStorageBackend>` (via `Deref`) and adds file-level maintenance methods: `compact`, `backup_to`, `storage_stats`, `verify_integrity`.
-- **`Db<B>`**: Generic over any storage backend `B: StorageEngine`. Cheap to clone (internally backed by `Arc`). `BknDb::in_memory()` returns `Db<MemoryStorageBackend>`.
+- **`Db<B>`**: Generic over any storage backend `B: StorageBackend`. Cheap to clone (internally backed by `Arc`). `BknDb::in_memory()` returns `Db<MemoryStorageBackend>`.
 - **`GraphDb`, `RelationalDb`, `Kv`**: Model-specific facades sharing the same backend. Non-transactional calls automatically open and commit their own transactions.
 
 ### Concurrency Guarantees
@@ -110,6 +119,11 @@ BknDb  ──Deref──▶  Db<RedbStorageBackend>
 ---
 
 ## 4. Quick Start
+
+Run this example with a new database file (or use `BknDb::in_memory()`). Later
+fragments assume an open `db`, the stated schemas/nodes, and the imports used
+in the quick start. Schema names in independent sections are examples rather
+than one continuous program.
 
 ```rust
 use bkndb::graph::{Direction, Properties};
@@ -199,7 +213,7 @@ drop(db); // Releases file lock
     let lsm_db = BknDb::open_lsm_with_options("data/lsm.bkndb", LsmOptions {
         memtable_flush_bytes: 32 * 1024 * 1024, // 32MB MemTable buffer
         compaction_trigger_files: 8,
-        block_size: 4096,
+        block_size_bytes: 4096,
         ..Default::default()
     })?;
     drop(lsm_db);
@@ -208,6 +222,10 @@ drop(db); // Releases file lock
 // 3. Ephemeral in-memory database
 let mem = BknDb::in_memory();
 ```
+
+Create parent directories before opening nested paths. Enable the dependency feature
+`lsm-backend` to use LSM methods; `#[cfg(feature = "lsm-backend")]` in an
+application refers to that application's own feature, not automatically to a dependency feature.
 
 ---
 
@@ -258,8 +276,8 @@ let e1 = g.create_edge(n1, "FOLLOWS", n2, Properties::from([("since".into(), 202
 let alice = g.get_node(n1)?.expect("exists");
 println!("Label: {}, Name: {:?}", alice.label, alice.properties.get("name"));
 
-let neighbors = g.neighbors(n1, Direction::Out, Some("FOLLOWS"))?;
-assert_eq!(neighbors, vec![n2]);
+let neighbors = g.neighbors_out(n1, "FOLLOWS")?;
+assert_eq!(neighbors.iter().map(|(node, _)| *node).collect::<Vec<_>>(), vec![n2]);
 
 // 4. Update Properties
 g.update_node_properties(n1, |props| {
@@ -283,32 +301,32 @@ let g = db.graph();
 let hits = g.traversal()
     .start(start_node)
     .direction(Direction::Out)
-    .edge_types(&["CALLS", "REFERENCES"])
+    .filter_edge_types(&["CALLS", "REFERENCES"])
     .max_depth(4)
     .run()?;
 
 // BFS Shortest Path (minimum hop count)
-if let Some(path) = g.find_shortest_path(start, target, Direction::Out, Some("CALLS"))? {
-    println!("Distance: {} hops", path.distance);
+if let Some(path) = g.find_shortest_path(start, target, Direction::Out, Some(&["CALLS"]))? {
+    println!("Distance: {} hops", path.edges().len());
     for step in path.steps {
-        println!("  {:?} --[{}]--> {:?}", step.from, step.edge_type, step.to);
+        println!("  Node {:?}, via edge {:?}, type {:?}", step.node, step.via_edge, step.edge_type);
     }
 }
 
 // Dijkstra Weighted Path (minimum cost)
-if let Some(route) = g.find_weighted_path(start, target, "latency_ms", Direction::Out, None)? {
+if let Some(route) = g.find_weighted_path(start, target, Direction::Out, None, "latency_ms", 1.0)? {
     println!("Minimum latency: {}", route.cost);
 }
 
 // Top Hubs (in-degree / degree centrality)
-let hubs = g.top_hubs(5)?;
-for hub in hubs {
-    println!("Hub Node: {:?}, Degree: {}", hub.node_id, hub.degree);
+let hubs = g.top_hubs(5, Direction::In, None)?;
+for (node_id, degree) in hubs {
+    println!("Hub Node: {:?}, Degree: {}", node_id, degree);
 }
 
 // Cascading Node Deletion (cleans up node and attached edges recursively)
-let stats = g.cascade_delete(root_node)?;
-println!("Cleaned up: {} nodes, {} edges", stats.nodes_deleted, stats.edges_deleted);
+let stats = g.cascade_delete(root_node, "CONTAINS")?;
+println!("Deleted {} nodes and their incident edges", stats.len());
 ```
 
 ---
@@ -361,12 +379,10 @@ for item in items {
 }
 
 // Update
-orders.update(col("status").eq("pending"), |row| {
-    row.insert("status".into(), "processed".into());
-})?;
+orders.update().filter(col("status").eq("pending")).set("status", "processed").run()?;
 
 // Delete
-orders.delete(col("status").eq("cancelled"))?;
+orders.delete().filter(col("status").eq("cancelled")).run()?;
 ```
 
 ---
@@ -376,11 +392,12 @@ orders.delete(col("status").eq("cancelled"))?;
 ```rust
 use bkndb::relational::{col, Agg};
 
-let mut t = db.relational().table_named("products")?;
+let rel = db.relational();
+let t = rel.table_named("products")?;
 
-// Filter operators: eq, ne, lt, lte, gt, gte, is_in, between, starts_with, contains, like
+// Filter operators: eq, ne, lt, le, gt, ge, is_in, between, starts_with, contains, like
 let cond = col("price").between(10.0, 50.0)
-    .and(col("category").is_in(vec!["books".into(), "stationery".into()]))
+    .and(col("category").is_in(["books", "stationery"]))
     .and(col("name").starts_with("Rust"));
 
 let filtered = t.select().filter(cond).run()?;
@@ -401,11 +418,8 @@ println!("Product Stats: {:?}", agg_results);
 ```rust
 // Atomic write transaction
 db.write_tx(|b| {
-    let mut g = b.graph();
-    let mut rel = b.relational();
-
-    let node = g.create_node("Account", Properties::from([("balance".into(), 1000.into())]))?;
-    rel.table_named("audit_log")?.insert(Properties::from([
+    let node = b.graph().create_node("Account", Properties::from([("balance".into(), 1000.into())]))?;
+    b.relational().table_named("audit_log")?.insert(Properties::from([
         ("event".into(), "account_opened".into()),
         ("account_id".into(), PropValue::Int(node.0 as i64)),
     ]))?;
@@ -415,8 +429,8 @@ db.write_tx(|b| {
 
 // Snapshot read transaction
 let (node_count, row_count) = db.read_tx(|tx| {
-    let nodes = tx.graph().node_count()?;
-    let rows = tx.relational().table_named("audit_log")?.count()?;
+    let nodes = tx.graph().nodes_by_label("Account")?.len();
+    let rows = tx.relational().table_named("audit_log")?.count(&bkndb::relational::Query::new())?;
     Ok((nodes, rows))
 })?;
 ```
@@ -426,22 +440,36 @@ let (node_count, row_count) = db.read_tx(|tx| {
 ## 13. Hybrid: `SyncBatch` and Joins
 
 ### Bulk Synchronization
+
+Relational rows are upserted by primary key. Graph nodes/edges are created;
+repeating a batch does not deduplicate graph entities. `add_node` returns
+`&mut Self`; use zero-based `NodeRef::New` positions for linked endpoints.
 ```rust
-use bkndb::hybrid::{SyncBatch, NewNode};
+use bkndb::{NodeRef, SyncBatch};
+use bkndb::graph::Properties;
+use bkndb::relational::{ColumnKind, ColumnSchema, TableSchema};
+
+let files = TableSchema::builder("files")
+    .column(ColumnSchema::new("path", ColumnKind::Str))
+    .column(ColumnSchema::new("lines", ColumnKind::Int))
+    .primary_key("path")
+    .build()?;
+db.relational().create_table(&files)?;
 
 let mut batch = SyncBatch::new();
-
-let n0 = batch.add_node("Package", [("name".to_string(), "tokio".into())]);
-let n1 = batch.add_node("Package", [("name".to_string(), "mio".into())]);
-batch.add_edge(NewNode(n0), "DEPENDS_ON", NewNode(n1), []);
-
-batch.add_row("metadata", [
-    ("pkg".to_string(), "tokio".into()),
-    ("downloads".to_string(), 50000000.into()),
-]);
+// New node references are zero-based positions in batch.nodes.
+batch.add_node("Module", Properties::from([("name".into(), "engine".into())]));
+batch.add_node("Function", Properties::from([("name".into(), "start".into())]));
+batch.add_linked_edge(NodeRef::New(0), "DECLARES", NodeRef::New(1), Properties::new());
+batch.add_row(&files, Properties::from([
+    ("path".into(), "src/engine.rs".into()),
+    ("lines".into(), 350.into()),
+]));
 
 let result = db.sync_batch(batch)?;
-println!("Synchronized {} nodes and {} rows", result.nodes_created.len(), result.rows_inserted);
+let rows: usize = result.relational_pks.iter().map(Vec::len).sum();
+println!("Committed: {} nodes, {} edges, {} rows",
+    result.node_ids.len(), result.edge_ids.len(), rows);
 ```
 
 ### Joining Graph Nodes with Relational Tables
@@ -449,7 +477,7 @@ println!("Synchronized {} nodes and {} rows", result.nodes_created.len(), result
 let nodes = vec![NodeId(1), NodeId(2)];
 let joined = db.join_nodes_with_table(&nodes, &schema)?;
 for item in joined {
-    println!("Node {:?} => Metadata Row: {:?}", item.node_id, item.row);
+    println!("Node {:?} => Metadata Row: {:?}", item.id, item.row);
 }
 ```
 
@@ -461,9 +489,9 @@ For binary protocols, caches, and custom serialization:
 
 ```rust
 let kv = db.kv();
-kv.set(b"session_store", b"sess_12345", b"user_data_payload")?;
+kv.put(bkndb::TableSpec("session_store"), b"sess_12345", b"user_data_payload")?;
 
-if let Some(val) = kv.get(b"session_store", b"sess_12345")? {
+if let Some(val) = kv.get(bkndb::TableSpec("session_store"), b"sess_12345")? {
     println!("Found session: {:?}", val);
 }
 ```
@@ -483,7 +511,7 @@ rel.sql("INSERT INTO items (name, qty) VALUES (?, ?)", vec!["Keyboard".into(), 1
 
 // Query
 let res = rel.sql("SELECT name, qty FROM items WHERE qty > :min ORDER BY qty DESC", 
-    bkndb::lang::Params::named([("min", 10.into())])
+    bkndb::lang::Params::named([("min", 10)])
 )?;
 for row in res.rows {
     println!("Item: {:?}, Qty: {:?}", row[0], row[1]);
@@ -503,7 +531,7 @@ let query = "
     ORDER BY friend_name
 ";
 
-let res = g.query(query, bkndb::lang::Params::named([("name", "Alice".into())]))?;
+let res = g.query(query, bkndb::lang::Params::named([("name", "Alice")]))?;
 for row in res.rows {
     println!("Friend: {:?}, Common paths: {:?}", row[0], row[1]);
 }
@@ -514,29 +542,39 @@ for row in res.rows {
 ## 17. Full-Text and Vector Search (BM25 & HNSW)
 
 ```rust
-use bkndb::relational::{pack_vector, VectorIndexOptions, VectorMetric};
+use bkndb::graph::Properties;
+use bkndb::relational::{
+    pack_vector, ColumnKind, ColumnSchema, TableSchema,
+    VectorIndexOptions, VectorMetric, VectorSearchOptions,
+};
 
-let mut rel = db.relational();
+let rel = db.relational();
+let articles = TableSchema::builder("articles")
+    .column(ColumnSchema::new("id", ColumnKind::Int))
+    .column(ColumnSchema::new("content", ColumnKind::Str))
+    .column(ColumnSchema::new("embedding", ColumnKind::Bytes))
+    .primary_key("id").auto_increment().build()?;
+rel.create_table(&articles)?;
+rel.table(&articles).insert(Properties::from([
+    ("content".into(), "Hybrid database in Rust".into()),
+    ("embedding".into(), pack_vector(&[0.1, 0.8, 0.3])),
+]))?;
 
-// 1. Full-Text Search (BM25)
-rel.create_fulltext_index("articles", "body")?;
-let text_results = rel.search_text("articles", "body", "memory mapped storage", 5, true, None)?;
-for hit in text_results {
-    println!("Score: {:.2}, Snippet: {:?}", hit.score, hit.snippet);
+rel.create_fulltext_index("articles", "content")?;
+// true requires every query term; it does not enable highlighting.
+for hit in rel.search_text("articles", "content", "hybrid rust", 5, true, None)? {
+    println!("BM25: {:.2}, Row: {:?}", hit.score, hit.row);
 }
 
-// 2. HNSW Vector Indexing
 rel.create_vector_index("articles", "embedding", VectorIndexOptions {
-    metric: VectorMetric::Cosine,
-    m: 16,
-    ef_construction: 100,
-    ef_search: 50,
+    metric: VectorMetric::Cosine, m: 16, ef_construction: 100,
 })?;
-
-let query_vec = vec![0.12, -0.45, 0.78, /* ... */];
-let hits = rel.search_vector("articles", "embedding", &query_vec, 5, VectorMetric::Cosine, None)?;
-for hit in hits {
-    println!("Row PK: {:?}, Distance: {:.4}", hit.row.pk, hit.distance);
+let query = [0.1, 0.9, 0.2];
+for hit in rel.search_vector_with(
+    "articles", "embedding", &query, 5, VectorMetric::Cosine, None,
+    VectorSearchOptions { exact: false, ef_search: Some(50) },
+)? {
+    println!("PK: {:?}, Cosine similarity: {:.4}", hit.row.pk, hit.score);
 }
 ```
 
@@ -545,22 +583,19 @@ for hit in hits {
 ## 18. Operations: Backup, Stats, Integrity, Compaction
 
 ```rust
-// 1. Force Compaction to reclaim dead space
+// Redb-backed BknDb::open handle; compact in place.
 db.compact()?;
 
-// 2. Online Hot Backup (consistent snapshot copy to destination)
-db.backup_to("backups/app_backup.bkndb")?;
+// Destination must not already exist.
+db.backup_to("app_backup.bkndb")?;
 
-// 3. Storage Integrity Check
+// Failure is returned as Err(BknError::Corruption(...)), not a report flag.
 let report = db.verify_integrity()?;
-assert!(report.is_ok());
+println!("Verified {} entries", report.entries);
 
-// 4. File-Level Stats (returns RedbStats by default, or LsmStats with lsm-backend)
-let stats = db.storage_stats()?;
-println!(
-    "File size: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
-    stats.file_size, stats.table_count, stats.stored_bytes, stats.reclaimable_bytes
-);
+let stats = db.storage_stats()?; // RedbStats with the default backend
+println!("File: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
+    stats.file_bytes, stats.table_count, stats.stored_bytes, stats.reclaimable_bytes);
 ```
 
 ---
@@ -571,28 +606,30 @@ Common error variants:
 - `BknError::NotFound`: Requested node, edge, or row not found.
 - `BknError::DuplicateKey`: Primary key or unique constraint violation.
 - `BknError::DatabaseLocked`: Database file is already opened by another handle/process.
-- `BknError::SchemaViolation`: Missing required columns or incompatible data types.
+- `BknError::SchemaMismatch` / `BknError::ConstraintViolation`: Missing required columns or incompatible data types.
 - `BknError::Corruption`: Checksum mismatch or corrupted storage blocks.
 
 ---
 
 ## 20. Storage Backends and Custom Storage Guide
 
-`bkndb` ships with multiple built-in engines implementing the `StorageEngine` trait:
+`bkndb` ships with multiple built-in engines implementing the `StorageBackend` trait:
 - **Redb (`RedbStorageBackend`)**: Default on-disk engine, battle-tested ACID B-tree in a single file with fast point lookups and MVCC reads.
 - **Memory (`MemoryStorageBackend`)**: In-memory ephemeral engine, zero disk I/O, ideal for tests and ephemeral caches.
 - **LSM (`LsmStorageBackend`)**: Optional engine (`feature = "lsm-backend"`), single-file WAL + memtable + compressed SSTables.
 
-To implement a new backend, implement `StorageEngine`, `StorageReadTx`, and `StorageWriteTx`:
+To implement a new backend, implement `StorageBackend` (`Send + Sync`),
+`StorageReadTx`, and `StorageWriteTx`. This skeleton assumes custom transaction
+types that implement those traits:
 
-```rust
-use bkndb_core::{StorageEngine, StorageReadTx, StorageWriteTx, TableSpec, BknError};
+```text
+use bkndb_core::{StorageBackend, StorageReadTx, StorageWriteTx, TableSpec, BknError};
 
 pub struct CustomEngine { /* ... */ }
 
-impl StorageEngine for CustomEngine {
-    type ReadTx<'a> = CustomReadTx<'a>;
-    type WriteTx<'a> = CustomWriteTx<'a>;
+impl StorageBackend for CustomEngine {
+    type ReadTx<'a> = CustomReadTx<'a> where Self: 'a;
+    type WriteTx<'a> = CustomWriteTx<'a> where Self: 'a;
 
     fn begin_read(&self) -> Result<Self::ReadTx<'_>, BknError> { todo!() }
     fn begin_write(&self) -> Result<Self::WriteTx<'_>, BknError> { todo!() }
@@ -603,8 +640,8 @@ impl StorageEngine for CustomEngine {
 
 ## 21. Quick API Reference
 
-```rust
-// Opening
+```text
+// Opening (schematic calls)
 BknDb::open(path)?;                     // Default (Redb)
 BknDb::open_redb(path)?;                // Explicit alias
 BknDb::open_lsm(path)?;                 // feature "lsm-backend"
@@ -612,14 +649,15 @@ BknDb::open_lsm_with_options(path, opt);// feature "lsm-backend"
 BknDb::in_memory();                     // In-memory
 ```
 
+```text
 // Graph
 db.graph().create_node(label, props)?;
-db.graph().create_edge(from, type, to, props)?;
-db.graph().neighbors(node, direction, edge_type)?;
+db.graph().create_edge(from, edge_type, to, props)?;
+db.graph().neighbors_out(node, "EDGE_TYPE")?; // (NodeId, EdgeId) pairs
 db.graph().find_shortest_path(from, to, direction, edge_type)?;
-db.graph().find_weighted_path(from, to, weight_prop, direction, edge_type)?;
-db.graph().top_hubs(k)?;
-db.graph().cascade_delete(node)?;
+db.graph().find_weighted_path(from, to, direction, edge_types, weight_prop, 1.0)?;
+db.graph().top_hubs(k, direction, label)?;
+db.graph().cascade_delete(node, "CONTAINS")?;
 db.graph().query("MATCH ...", params)?;
 
 // Relational
@@ -628,7 +666,7 @@ db.relational().table_named("name")?.insert(row)?;
 db.relational().table_named("name")?.select().filter(col("x").gt(5)).run()?;
 db.relational().sql("SELECT ...", params)?;
 db.relational().create_fulltext_index(table, col)?;
-db.relational().search_text(table, col, query, limit, highlight, filter)?;
+db.relational().search_text(table, col, query, limit, match_all, filter)?;
 db.relational().create_vector_index(table, col, options)?;
 db.relational().search_vector(table, col, query_vec, limit, metric, filter)?;
 
