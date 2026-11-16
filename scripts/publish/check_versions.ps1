@@ -75,6 +75,18 @@ function Check-Version {
     }
 }
 
+# Validate the Go distribution version when a release manifest is present.
+$goManifest = "$WorkspaceRoot/bindings/go/bkndb/lib/manifest.json"
+if (Test-Path $goManifest) {
+    $goVersion = (Get-Content $goManifest -Raw | ConvertFrom-Json).version
+    if ($goVersion -ne $TargetVersion) {
+        $mismatches += [PSCustomObject]@{
+            File = "bindings/go/bkndb/lib/manifest.json"
+            Expected = $TargetVersion; Found = $goVersion; Description = "Go distribution (rebuild required)"
+        }
+    }
+}
+
 # --- Checks ---
 # 1. Root Cargo.toml
 Check-Version -FilePath "Cargo.toml" -Pattern 'version\s*=\s*"([^"]+)"' -Description "workspace.package.version"

@@ -1,0 +1,48 @@
+name: Publish Go module tag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Queue concurrent publication attempts; never cancel a tag push in progress.
+concurrency:
+  group: bkndb-go-publication
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate committed distribution
+        run: |
+          python scripts/go/package.py verify --all
+          python scripts/go/package.py zip --all
+          bash scripts/publish/check_versions.sh
+          git diff --exit-code
+      - id: version
+        run: echo "version=$(python -c 'import sys; sys.path.insert(0,"scripts/go"); import package; print(package.version())')" >> "$GITHUB_OUTPUT"
+  tag:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Publish tag or reconcile a previous successful attempt
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: python scripts/go/publish_tag.py --version "$VERSION" --commit "$GITHUB_SHA"

@@ -56,6 +56,14 @@ check_version() {
     fi
 }
 
+# Validate the Go distribution version when a release manifest is present.
+if [ -f bindings/go/bkndb/lib/manifest.json ]; then
+    GO_VERSION=$(python3 -c 'import json; print(json.load(open("bindings/go/bkndb/lib/manifest.json"))["version"])')
+    if [ "$GO_VERSION" != "$TARGET_VERSION" ]; then
+        MISMATCHES+=("Go distribution is v$GO_VERSION (needs v$TARGET_VERSION); rebuild it")
+    fi
+fi
+
 # --- Checks ---
 # 1. Root Cargo.toml
 check_version "Cargo.toml" '^version = "[^"]+"' "workspace.package.version"

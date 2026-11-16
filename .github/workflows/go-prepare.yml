@@ -1,0 +1,63 @@
+name: Prepare Go distribution PR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep separate preparation requests from racing to update the same PR branch.
+concurrency:
+  group: bkndb-go-preparation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/go.yml
+    permissions:
+      contents: read
+  distribution:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Remove old distribution metadata and archives
+        run: rm -rf bindings/go/bkndb/lib
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: go-static-*
+          path: /tmp/go-static
+      - name: Assemble all platforms
+        shell: bash
+        run: |
+          for platform in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64; do
+            mkdir -p "bindings/go/bkndb/lib/$platform"
+            cp /tmp/go-static/go-static-"$platform"/* "bindings/go/bkndb/lib/$platform/"
+          done
+          python scripts/go/package.py assemble
+          python scripts/go/package.py zip --all
+          bash scripts/publish/check_versions.sh
+          echo "VERSION=$(python -c 'import sys; sys.path.insert(0,"scripts/go"); import package; print(package.version())')" >> "$GITHUB_ENV"
+      - name: Open distribution PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: main
+          branch: codex/go-distribution-${{ env.VERSION }}
+          title: 'Package static Go distribution v${{ env.VERSION }}'
+          commit-message: 'Package static Go distribution v${{ env.VERSION }}'
+          body: |
+            Packages five tested static archives from the workflow source revision.
+            Merge this PR before running the Publish Go module tag workflow.
+            Release validation rejects archives whose source fingerprint is stale.
+          add-paths: |
+            bindings/go/bkndb/lib
+            bindings/go/bkndb/bkndb.h
