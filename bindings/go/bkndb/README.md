@@ -1,39 +1,62 @@
 # bkndb-go
 
-This guide targets the **0.3 API** in this checkout. Persistent databases use
-Redb. Old LSM files are not automatically migrated, even if they also end in
-`.bkndb`. The Go module requires **Go 1.22+** and a native library from the same
-checkout. `go get` installs the Go wrapper; it does not build that library.
+This guide targets **BknDb 0.3.1**. Persistent databases use Redb; LSM files
+are a different format and are not automatically migrated.
 
-From the repository root:
-
-```bash
-cargo build --release -p bkndb-ffi
-```
-
-For a local source dependency in another Go project, use a module replacement:
+The Go release module includes a C header and precompiled static BknDb libraries.
+Building an application requires **Go 1.22+, CGO, and a C compiler**. Rust is only
+needed by maintainers rebuilding those libraries. The resulting executable needs
+no separate BknDb shared library, though OS system libraries may still be required.
 
 ```bash
-go mod edit -replace github.com/BknOrg/bkndb/bindings/go/bkndb=/absolute/path/to/bkn-db/bindings/go/bkndb
-go get github.com/BknOrg/bkndb/bindings/go/bkndb
+go get github.com/BknOrg/bkndb/bindings/go/bkndb@v0.3.1
+CGO_ENABLED=1 go build .
 ```
 
-On Windows, put `target/release/bkndb_ffi.dll` next to your executable or in a
-directory searched by the loader. No C compiler is required for the Go wrapper.
-On Linux/macOS, cgo and a C compiler are required; use the repo's C header and
-ensure the linker can find `libbkndb_ffi.so` / `libbkndb_ffi.dylib`. Set
-`LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS) for runtime loading.
-See [the Go CI workflow](../../../.github/workflows/go.yml) for test setup.
+This version becomes available through `go get` after the distribution PR is
+merged and the `bindings/go/bkndb/v0.3.1` tag is published.
 
-SQL parameters are variadic (`db.SQL(query, value1, value2)`) or a single
-`map[string]any` for named parameters. Search hits expose `PK`, `Values`, and
-`Score`; cosine/dot scores sort highest first and Euclidean distances lowest
-first. Vector dimensions are inferred from stored vectors and must match.
+| Platform | Supported architectures | Build requirement / minimum runtime |
+| --- | --- | --- |
+| Linux (glibc) | amd64, arm64 | GCC; glibc 2.28+ |
+| macOS | amd64, arm64 | Xcode Command Line Tools; macOS 11.0+ |
+| Windows | amd64 | MinGW-w64 GCC on PATH; CGO enabled |
 
+For Debian/Ubuntu install `build-essential`; for macOS run `xcode-select --install`.
+For Windows, install MSYS2's `mingw-w64-x86_64-gcc` package and add its
+`mingw64/bin` directory to PATH. In PowerShell enable CGO with
+`$env:CGO_ENABLED = "1"`, then run `go build .`. Compilers are needed on the build
+machine only, not on machines running the executable.
+
+The bundled Linux archive targets glibc 2.28. The final executable can require a
+newer glibc if built with a newer system C toolchain; use a matching build
+environment when deploying to older Linux systems.
+
+Alpine/musl, other architectures, and `CGO_ENABLED=0` are unsupported. CGO cross
+compilation requires a matching target C compiler; setting GOOS/GOARCH alone is
+not sufficient. The public Go API and Redb storage behavior are unchanged.
+
+For source development from the repository root (Python 3.9+ and Rust required):
+
+```bash
+# Replace linux_amd64 with your supported host platform.
+rustup target add x86_64-unknown-linux-gnu
+python3 scripts/go/package.py build linux_amd64
+cd bindings/go/bkndb
+CGO_ENABLED=1 go test ./...
+```
+
+Windows builds use Rust target `x86_64-pc-windows-gnu`; macOS uses
+`x86_64-apple-darwin` or `aarch64-apple-darwin`. Use `python` instead of `python3`
+where appropriate. Local source builds are not release distributions: Linux
+release archives are rebuilt in manylinux 2.28 containers by CI.
+
+SQL parameters remain variadic (`db.SQL(query, value1, value2)`) or a single
+`map[string]any` for named parameters. Vector dimensions must match stored data.
 
 Official Go bindings for **BknDb** — Embedded hybrid graph-relational database engine with ACID transactions, BM25 full-text search, and HNSW vector similarity search.
 
-The Go wrapper uses the standard library only and requires the matching BknDb native library at runtime.
+The Go wrapper uses the standard library and CGO to link the bundled static BknDb library.
 
 ---
 
@@ -44,8 +67,7 @@ The Go wrapper uses the standard library only and requires the matching BknDb na
 - **Vector Search (HNSW)**: Cosine, Euclidean, and Dot-Product similarity search for semantic memory & embeddings.
 - **Knowledge Graph**: Nodes, directed edges, graph properties, traversal (`Neighbors`), and `MATCH ... RETURN` graph queries.
 - **Explicit ACID Transactions**: Atomic `Begin()`, `Commit()`, and `Rollback()`.
-- **Zero-Dependency on Windows**: Uses Windows native dynamic loading (`syscall.NewLazyDLL`), allowing direct `go run` / `go build` **without requiring GCC or MinGW**.
-- **cgo Support**: Uses standard C-ABI (`bkndb.h`) on Linux, macOS, and POSIX systems.
+- **Static CGO linking**: Uses the bundled C header and static archive on all five supported platform targets.
 
 ---
 
@@ -54,11 +76,11 @@ The Go wrapper uses the standard library only and requires the matching BknDb na
 In your Go project (e.g. your Lightweight Hermes Agent):
 
 ```bash
-# Add module replace or install
-go get github.com/BknOrg/bkndb/bindings/go/bkndb
+go get github.com/BknOrg/bkndb/bindings/go/bkndb@v0.3.1
+CGO_ENABLED=1 go build .
 ```
 
-Ensure `bkndb_ffi.dll` (on Windows) or `libbkndb_ffi.so` (on Linux) is present in your executable directory, working directory, or system PATH.
+The tagged module includes its matching static library. No BknDb runtime library path configuration is needed.
 
 ---
 

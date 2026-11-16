@@ -1,35 +1,58 @@
 # bkndb for Go — Complete Guide & API Reference
 
-This guide targets the **0.3 API** in this checkout. Persistent databases use
-Redb. Old LSM files are not automatically migrated, even if they also end in
-`.bkndb`. The Go module requires **Go 1.22+** and a native library from the same
-checkout. `go get` installs the Go wrapper; it does not build that library.
+This guide targets **BknDb 0.3.1**. Persistent databases use Redb; LSM files
+are a different format and are not automatically migrated.
 
-From the repository root:
-
-```bash
-cargo build --release -p bkndb-ffi
-```
-
-For a local source dependency in another Go project, use a module replacement:
+The Go release module includes a C header and precompiled static BknDb libraries.
+Building an application requires **Go 1.22+, CGO, and a C compiler**. Rust is only
+needed by maintainers rebuilding those libraries. The resulting executable needs
+no separate BknDb shared library, though OS system libraries may still be required.
 
 ```bash
-go mod edit -replace github.com/BknOrg/bkndb/bindings/go/bkndb=/absolute/path/to/bkn-db/bindings/go/bkndb
-go get github.com/BknOrg/bkndb/bindings/go/bkndb
+go get github.com/BknOrg/bkndb/bindings/go/bkndb@v0.3.1
+CGO_ENABLED=1 go build .
 ```
 
-On Windows, put `target/release/bkndb_ffi.dll` next to your executable or in a
-directory searched by the loader. No C compiler is required for the Go wrapper.
-On Linux/macOS, cgo and a C compiler are required; use the repo's C header and
-ensure the linker can find `libbkndb_ffi.so` / `libbkndb_ffi.dylib`. Set
-`LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS) for runtime loading.
-See [the Go CI workflow](../../.github/workflows/go.yml) for test setup.
+This version becomes available through `go get` after the distribution PR is
+merged and the `bindings/go/bkndb/v0.3.1` tag is published.
 
-SQL parameters are variadic (`db.SQL(query, value1, value2)`) or a single
-`map[string]any` for named parameters. Search hits expose `PK`, `Values`, and
-`Score`; cosine/dot scores sort highest first and Euclidean distances lowest
-first. Vector dimensions are inferred from stored vectors and must match.
+| Platform | Supported architectures | Build requirement / minimum runtime |
+| --- | --- | --- |
+| Linux (glibc) | amd64, arm64 | GCC; glibc 2.28+ |
+| macOS | amd64, arm64 | Xcode Command Line Tools; macOS 11.0+ |
+| Windows | amd64 | MinGW-w64 GCC on PATH; CGO enabled |
 
+For Debian/Ubuntu install `build-essential`; for macOS run `xcode-select --install`.
+For Windows, install MSYS2's `mingw-w64-x86_64-gcc` package and add its
+`mingw64/bin` directory to PATH. In PowerShell enable CGO with
+`$env:CGO_ENABLED = "1"`, then run `go build .`. Compilers are needed on the build
+machine only, not on machines running the executable.
+
+The bundled Linux archive targets glibc 2.28. The final executable can require a
+newer glibc if built with a newer system C toolchain; use a matching build
+environment when deploying to older Linux systems.
+
+Alpine/musl, other architectures, and `CGO_ENABLED=0` are unsupported. CGO cross
+compilation requires a matching target C compiler; setting GOOS/GOARCH alone is
+not sufficient. The public Go API and Redb storage behavior are unchanged.
+
+For source development from the repository root (Python 3.9+ and Rust required):
+
+```bash
+# Replace linux_amd64 with your supported host platform.
+rustup target add x86_64-unknown-linux-gnu
+python3 scripts/go/package.py build linux_amd64
+cd bindings/go/bkndb
+CGO_ENABLED=1 go test ./...
+```
+
+Windows builds use Rust target `x86_64-pc-windows-gnu`; macOS uses
+`x86_64-apple-darwin` or `aarch64-apple-darwin`. Use `python` instead of `python3`
+where appropriate. Local source builds are not release distributions: Linux
+release archives are rebuilt in manylinux 2.28 containers by CI.
+
+SQL parameters remain variadic (`db.SQL(query, value1, value2)`) or a single
+`map[string]any` for named parameters. Vector dimensions must match stored data.
 
 This document is the comprehensive guide and complete API reference for the `bkndb` Go package (`github.com/BknOrg/bkndb/bindings/go/bkndb`): architecture, installation, public APIs, transactions, graph queries, vector & full-text search, runnable examples, and performance guidelines.
 
@@ -70,7 +93,7 @@ This document is the comprehensive guide and complete API reference for the `bkn
 
 ### Ideal For:
 - **Lightweight AI Agents (e.g. Hermes Agent)**: Single-binary agent deployment needing conversational history (SQL), episodic recall (BM25/vector), and tool/skill relationships (Graph).
-- **Embedded Desktop & CLI Utilities**: Local storage without requiring GCC/MinGW on Windows.
+- **Embedded Desktop & CLI Utilities**: Local storage with a single application executable; a C compiler is required at build time.
 - **Local GraphRAG & Knowledge Bases**: Fast local similarity search combined with graph entity traversal.
 
 ---
@@ -79,32 +102,9 @@ This document is the comprehensive guide and complete API reference for the `bkn
 
 ### Go Module
 
-Install via standard Go toolchain:
-
-```bash
-go get github.com/BknOrg/bkndb/bindings/go/bkndb
-```
-
-Or reference locally via `replace` directive in your `go.mod`:
-
-```go
-module my-app
-
-go 1.21
-
-require github.com/BknOrg/bkndb/bindings/go/bkndb v0.0.0
-replace github.com/BknOrg/bkndb/bindings/go/bkndb => ../path/to/bkn-db/bindings/go/bkndb
-```
-
-### Native Binary Requirement
-The Go package binds to `bkndb_ffi` via C-ABI:
-- **Windows**: Requires `bkndb_ffi.dll`.
-- **Linux**: Requires `libbkndb_ffi.so`.
-- **macOS**: Requires `libbkndb_ffi.dylib`.
-
-Place the binary in your current working directory, executable folder, or in system library paths (`PATH` / `LD_LIBRARY_PATH`).
-
-> **Zero CGO on Windows**: The Windows implementation uses `syscall.NewLazyDLL` from the Go standard library. You **do not need MinGW or GCC** to build or run on Windows!
+Use the installation commands and platform prerequisites above. Published modules
+contain their own static archives; local checkout builds must first run the
+packaging build script for the host platform.
 
 ---
 
@@ -455,11 +455,11 @@ err := db.Compact()
 
 ## 13. Driver Architecture & Cross-Platform Details
 
-The Go binding is architected in two clean layers:
-1. **Public Idiomatic Layer**: `DB`, `Tx`, `QueryResult`, `ScoredRow`.
-2. **Internal Driver Interface (`driver`)**:
-   - **`binding_windows.go`**: Direct syscall via `syscall.NewLazyDLL("bkndb_ffi.dll")`. No C compiler, header, or cgo runtime is invoked.
-   - **`binding_cgo.go`**: Standard C-ABI bindings using `#include "../../bkndb.h"` on POSIX platforms.
+The public `DB` and `Tx` types delegate to a single internal CGO driver on every
+supported target. `binding_cgo.go` includes the package-local `bkndb.h` and links
+an explicit `${SRCDIR}/lib/<os>_<arch>/libbkndb_ffi.a` path. No dynamic loader or
+runtime DLL extraction is involved. Unsupported targets and disabled CGO fail
+at compile time with a diagnostic naming the supported platforms.
 
 ---
 

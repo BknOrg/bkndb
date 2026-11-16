@@ -115,6 +115,21 @@ pip install bkndb                     # Core wheel (Windows, Linux, macOS)
 pip install "bkndb[pandas,networkx]"  # With Pandas and NetworkX support
 ```
 
+### Go
+
+The 0.3.1 Go distribution bundles static BknDb libraries for Linux glibc 2.28+
+(amd64/arm64), macOS 11+ (amd64/arm64), and Windows amd64.
+Install Go 1.22+ and a C compiler (GCC, Xcode Command Line Tools, or MinGW-w64):
+
+```bash
+go get github.com/BknOrg/bkndb/bindings/go/bkndb@v0.3.1
+CGO_ENABLED=1 go build .
+```
+
+The version is available after its distribution PR is merged and its Go tag is
+published. Consumers do not need Rust or a separate BknDb runtime library.
+See the [Go guide](bindings/go/bkndb/README.md) for Windows commands and source builds.
+
 ### Mobile (Android & iOS)
 
 - **Android (Kotlin):** Build the native `.so` with 16KB linker alignment and package it with the generated Kotlin binding; the script does not assemble an AAR. See [scripts/build_android.ps1](scripts/build_android.ps1).
