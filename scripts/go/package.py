@@ -43,7 +43,7 @@ def fingerprint():
               if p.is_file() and p.suffix in ('.rs', '.toml', '.udl', '.h', '.c')]
     paths += list(MODULE.glob('*.go')) + [MODULE / 'go.mod']
     h = hashlib.sha256()
-    for p in sorted(set(paths)):
+    for p in sorted(set(paths), key=lambda item: item.relative_to(ROOT).as_posix()):
         h.update(p.relative_to(ROOT).as_posix().encode() + b'\0')
         h.update(p.read_bytes().replace(b'\r\n', b'\n') + b'\0')
     return h.hexdigest()
