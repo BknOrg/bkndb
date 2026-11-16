@@ -53,6 +53,14 @@ class DistributionTest(unittest.TestCase):
         data.update(updates)
         package.write_json(path, data)
 
+    def test_windows_runtime_path_from_copied_environment(self):
+        for spelling in ('SYSTEMROOT', 'SystemRoot'):
+            path = package.runtime_path({spelling: 'C:/Windows'}, True)
+            self.assertEqual(Path(path), Path('C:/Windows') / 'System32')
+        self.assertEqual(package.runtime_path({}, False), '/nonexistent')
+        with self.assertRaisesRegex(ValueError, 'SYSTEMROOT'):
+            package.runtime_path({}, True)
+
     def test_complete_distribution(self):
         self.assertEqual(set(package.verify(True)), set(package.TARGETS))
 

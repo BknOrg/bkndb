@@ -184,9 +184,23 @@ def check_binary(binary):
         result = run(['otool', '-L', str(binary)], capture_output=True).stdout
     else:
         result = run(['readelf', '-d', str(binary)], capture_output=True).stdout
-    print(result)
+    if os.name == 'nt':
+        # objdump also prints every unwind record; keep CI logs to DLL imports.
+        print('Windows DLL imports:', ', '.join(re.findall(r'DLL Name:\s*(\S+)', result)))
+    else:
+        print(result)
     if re.search(r'(?:lib)?bkndb_ffi\.(?:dll|so|dylib)', result, re.I):
         raise ValueError('Executable still depends on a shared BknDb library')
+
+
+def runtime_path(env, windows):
+    if not windows:
+        return '/nonexistent'
+    # os.environ is case-insensitive on Windows, but its copied dict is not.
+    root = env.get('SYSTEMROOT') or env.get('SystemRoot')
+    if not root:
+        raise ValueError('Windows SYSTEMROOT is required for system DLL lookup')
+    return str(Path(root) / 'System32')
 
 
 def consumer():
@@ -237,7 +251,7 @@ func main() {
         shutil.copyfile(binary, executable)
         executable.chmod(0o755)
         # Keep Windows system DLL lookup, but exclude all build tools from PATH.
-        env['PATH'] = str(Path(env['SystemRoot']) / 'System32') if os.name == 'nt' else '/nonexistent'
+        env['PATH'] = runtime_path(env, os.name == 'nt')
         run([str(executable)], cwd=clean, env=env)
 
 
