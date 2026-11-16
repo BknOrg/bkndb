@@ -72,16 +72,18 @@ jobs:
           toolchain: '1.99.1'
           targets: ${{ matrix.target }}
       - name: Install MinGW compiler and import inspector
+        id: msys2
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
-          location: 'C:\'
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
       - name: Select MinGW
         if: runner.os == 'Windows'
         shell: pwsh
-        run: '"C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: '"$env:MSYS2_ROOT\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
       - name: Remove previously packaged archives
         run: python -c 'import shutil; shutil.rmtree("bindings/go/bkndb/lib", ignore_errors=True)'
       - name: Build Linux archive with glibc 2.28
@@ -110,6 +112,44 @@ jobs:
         with:
           name: go-static-${{ matrix.platform }}
           path: bindings/go/bkndb/lib/${{ matrix.platform }}/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+
+  distribution-check:
+    name: Validate complete Go distribution
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: go-static-*
+          path: /tmp/go-static
+      - name: Assemble and validate the five-target package
+        shell: bash
+        run: |
+          rm -rf bindings/go/bkndb/lib
+          for platform in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64; do
+            mkdir -p "bindings/go/bkndb/lib/$platform"
+            cp /tmp/go-static/go-static-"$platform"/* "bindings/go/bkndb/lib/$platform/"
+          done
+          python scripts/go/package.py assemble
+          python scripts/go/package.py zip --all
+          python scripts/go/package.py consumer
+          bash scripts/publish/check_versions.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-distribution
+          path: bindings/go/bkndb/lib/
           if-no-files-found: error
           overwrite: true
           retention-days: 30

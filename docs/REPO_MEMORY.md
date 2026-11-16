@@ -49,7 +49,8 @@ the supported Go distribution. Cross compilation also needs a target C compiler.
 - Source version updates: scripts under `scripts/publish`; after changing source
   or versions, old static archives must be rebuilt rather than relabeled.
 
-CI builds all five Go targets and tests an external consumer via a local module
+CI builds all five Go targets, assembles and validates the combined distribution,
+and tests an external consumer via a local module
 proxy with its own cache, without `replace`. Release preparation uses manylinux
 2.28, macOS deployment target 11.0 and Windows GNU, pinned Rust 1.99.1. Local Linux
 build records use the real host glibc and cannot masquerade as release builds.
