@@ -1,0 +1,10 @@
+{
+  "baseline": "glibc 2.28",
+  "native_static_libs": "-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc",
+  "platform": "linux_amd64",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "sha256": "80ce93d9c96c99f91fa1a773a1815fb800b42dd861e13a4d0c5139f46b83106e",
+  "source_fingerprint": "0e023154d9ef4b2694d39cca4d6fa017f87700256874b60c484b4bdf6759677a",
+  "target": "x86_64-unknown-linux-gnu",
+  "version": "0.3.1"
+}

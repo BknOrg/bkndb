@@ -1,0 +1,10 @@
+{
+  "baseline": "Windows GNU / MinGW-w64",
+  "native_static_libs": "-lkernel32 -lntdll -luserenv -lws2_32 -ldbghelp\u001b[0m",
+  "platform": "windows_amd64",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "sha256": "2b83c5857599b3e4d09b9e22a99f99141a9f9cbcca448b2778b9bef2e84bba5b",
+  "source_fingerprint": "0e023154d9ef4b2694d39cca4d6fa017f87700256874b60c484b4bdf6759677a",
+  "target": "x86_64-pc-windows-gnu",
+  "version": "0.3.1"
+}
