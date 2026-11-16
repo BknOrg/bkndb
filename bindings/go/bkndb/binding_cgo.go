@@ -1,10 +1,14 @@
-//go:build !windows
+//go:build cgo && ((linux && !android && (amd64 || arm64)) || (darwin && !ios && (amd64 || arm64)) || (windows && amd64))
 
 package bkndb
 
 /*
-#cgo LDFLAGS: -L. -L../../target/debug -L../../target/release -L../../../target/debug -L../../../target/release -lbkndb_ffi
-#include "../../bkndb.h"
+#cgo linux,amd64 LDFLAGS: ${SRCDIR}/lib/linux_amd64/libbkndb_ffi.a -lutil -lrt -lpthread -lm -ldl
+#cgo linux,arm64 LDFLAGS: ${SRCDIR}/lib/linux_arm64/libbkndb_ffi.a -lutil -lrt -lpthread -lm -ldl
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/lib/darwin_amd64/libbkndb_ffi.a -framework CoreFoundation -framework Security -liconv -lSystem
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/lib/darwin_arm64/libbkndb_ffi.a -framework CoreFoundation -framework Security -liconv -lSystem
+#cgo windows,amd64 LDFLAGS: ${SRCDIR}/lib/windows_amd64/libbkndb_ffi.a -lws2_32 -luserenv -lbcrypt -lntdll -ladvapi32 -lkernel32 -lmsvcrt
+#include "bkndb.h"
 #include <stdlib.h>
 */
 import "C"

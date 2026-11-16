@@ -3,8 +3,7 @@ package bkndb
 // defaultDriver holds the active platform driver instance (initialized in platform-specific files).
 var defaultDriver driver
 
-// driver is the internal interface implemented by platform-specific FFI loaders
-// (e.g., Windows syscall.NewLazyDLL or standard cgo for POSIX systems).
+// driver is the internal interface implemented by the statically linked CGO driver.
 type driver interface {
 	open(path string) (uintptr, error)
 	inMemory() (uintptr, error)
