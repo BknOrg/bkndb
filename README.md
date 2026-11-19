@@ -19,7 +19,7 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
                       ┌────────────────────────────────────────┐
                       │            Client Interfaces           │
                       │  Rust • Python • Go • Kotlin/Swift  │
-                      │  Swift/iOS   •  CLI (Coming Soon)      │
+                      │  Swift/iOS   •  CLI (Candidate)        │
                       └───────────────────┬────────────────────┘
                                           │
                       ┌───────────────────▼────────────────────┐
@@ -51,7 +51,7 @@ Designed for **AI agents**, **GraphRAG**, **code intelligence**, **local-first d
 
 1. **Embedded & Zero-Daemon:** Runs directly inside your application process (like SQLite/DuckDB). No server setup, no port configuration, zero network latency.
 2. **Unified ACID Transactions:** Write relational records, graph nodes, directed edges, and search vectors in a single atomic transaction. Either everything commits, or nothing does.
-3. **Single-File Native Persistence (`.bkndb`):** Powered by `redb` as the default battle-tested copy-on-write B-tree ACID storage layer for guaranteed durability, alongside an optional high-throughput append-only LSM architecture with memory-mapped zero-copy reading (`memmap2`) and WAL durability.
+3. **Single-File Native Persistence (`.bkndb`):** Powered by `redb` as the default battle-tested copy-on-write B-tree ACID storage layer for guaranteed durability, alongside an optional LSM architecture with positioned block I/O, checked WAL durability, explicit migrations and a stable lock sidecar. Performance depends on the workload.
 4. **Sub-Millisecond Graph Traversal:** Built-in BFS shortest path, Dijkstra weighted path, blast radius traversal (impact analysis), in-degree centrality (top hubs), and cascading node deletion.
 5. **Built-in Full-Text & Vector Search:** Native BM25 inverted index and HNSW (Hierarchical Navigable Small World) vector index for fast semantic similarity search in the same database.
 6. **Zero-Cost Hybrid Joins:** Effortlessly join graph traversal results with relational metadata tables in one read transaction.
@@ -97,7 +97,7 @@ bkndb = "0.3"
 | `graph` | **Yes** | Property graph layer, traversal algorithms, and Cypher `MATCH` queries. |
 | `relational-layer` | **Yes** | Relational tables, schema constraints, query builder, and SQL engine. |
 | `search` | **Yes** | Full-text search (BM25) and exact / HNSW vector similarity search. |
-| `lsm-backend` | No | Optional append-only single-file LSM storage engine with zero-copy mmap. |
+| `lsm-backend` | No | Optional transactional LSM storage engine; one data file plus operational sidecars. |
 
 `BknDb::open()` selects Redb with the default features. To use LSM while
 keeping the defaults, enable `lsm-backend` and call `BknDb::open_lsm()`.
@@ -119,7 +119,7 @@ pip install "bkndb[pandas,networkx]"  # With Pandas and NetworkX support
 
 The 0.3.1 Go distribution bundles static BknDb libraries for Linux glibc 2.28+
 (amd64/arm64), macOS 11+ (amd64/arm64), and Windows amd64.
-Install Go 1.22+ and a C compiler (GCC, Xcode Command Line Tools, or MinGW-w64):
+Install Go 1.25+ and a C compiler (GCC, Xcode Command Line Tools, or MinGW-w64):
 
 ```bash
 go get github.com/BknOrg/bkndb/bindings/go/bkndb@v0.3.1
@@ -443,7 +443,7 @@ println!("File: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
 | [`crates/bkndb-core`](crates/bkndb-core) | Core graph, relational, SQL/MATCH parsers, HNSW ANN, and storage abstractions. |
 | [`crates/bkndb-storage-redb`](crates/bkndb-storage-redb) | Default robust single-file ACID storage engine backed by `redb`. |
 | [`crates/bkndb-storage-mem`](crates/bkndb-storage-mem) | In-memory key-value backend for ephemeral databases and testing. |
-| [`crates/bkndb-storage-lsm`](crates/bkndb-storage-lsm) | Optional append-only LSM storage engine (mmap zero-copy, WAL, SSTables). |
+| [`crates/bkndb-storage-lsm`](crates/bkndb-storage-lsm) | Adapter for the independent LSM storage engine (positioned I/O, WAL, SSTables). |
 | [`crates/bkndb-ffi`](crates/bkndb-ffi) | UniFFI C/Kotlin/Swift bridge with 16KB page size compliance. |
 | [`bindings/python`](bindings/python) | Python package with high-level Pythonic wrapper, Pandas & NetworkX integration. |
 
@@ -462,3 +462,29 @@ println!("File: {} bytes, Tables: {}, Stored: {} bytes, Reclaimable: {} bytes",
 ## License
 
 This project is licensed under the Apache License, Version 2.0 (see [LICENSE](LICENSE) or <http://www.apache.org/licenses/LICENSE-2.0>).
+
+### Explicit LSM and Go/WASM (under validation)
+
+Redb remains the default. `bkndb-engine` now separates transactional LSM storage
+from SQL/graph/search. Go 1.25+ consumers may choose `OpenLSM` explicitly and build
+with `CGO_ENABLED=0 go build -tags=bkndb_wasm .` to embed all BknDb functionality
+through wazero. Native CGO remains available. LSM uses its own format, a lock
+sidecar and explicit migrations to new files. See the [engine guide](docs/LSM_ENGINE.md)
+and [audit/acceptance status](docs/LSM_AUDIT.md) before selecting this backend.
+
+## Native CLI (unreleased validation candidate)
+
+The new workspace crate `bkndb-cli` produces one native `bkndb` executable for
+inspection, verified backup/migration, SQL, graph, search and diagnostics. Redb
+remains the default; LSM is explicit. Build with:
+
+```sh
+cargo build --release --locked -p bkndb-cli
+./target/release/bkndb --help
+```
+
+Read the [CLI guide](docs/CLI.md) before maintenance. Inspection preserves source
+bytes; administration is offline and destinations are never overwritten. All three
+phases are implemented for validation, but stable publication waits for the five
+platform runtime gates, engine qualification, soak and review. No CLI package has
+been published by this implementation.

@@ -55,6 +55,7 @@ type ScoredRow struct {
 }
 
 // QueryResult represents the tabular result of a SQL or graph query.
+// Integer interface values outside the exact float64 range use json.Number.
 type QueryResult struct {
 	Columns  []string `json:"columns"`
 	Rows     [][]any  `json:"rows"`

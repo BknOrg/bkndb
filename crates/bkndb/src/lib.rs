@@ -203,3 +203,6 @@ impl BknDb {
         Db::new(MemoryStorageBackend::new())
     }
 }
+
+#[cfg(all(feature="redb-backend", feature="lsm-backend"))]
+pub mod migration;

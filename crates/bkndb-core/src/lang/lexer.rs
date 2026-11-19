@@ -56,6 +56,9 @@ pub(crate) fn tokenize(src: &str, dialect: Dialect) -> Result<Vec<Token>, BknErr
     let mut out = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
+        if out.len() >= 200_000 {
+            return Err(BknError::ResourceLimit("query/script exceeds 200000 tokens".into()));
+        }
         let c = bytes[i];
         let start = i;
         if c.is_ascii_whitespace() {
@@ -81,6 +84,9 @@ pub(crate) fn tokenize(src: &str, dialect: Dialect) -> Result<Vec<Token>, BknErr
                     .char_indices()
                     .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_'))
                     .map_or(src.len(), |(n, _)| i + n);
+                if end == i {
+                    return Err(err_at(src, i, "unexpected character; quote non-identifier text"));
+                }
                 let word = src[i..end].to_string();
                 i = end;
                 Tok::Ident(word)
@@ -289,5 +295,19 @@ mod tests {
         assert!(tokenize("a # b", Dialect::Sql).is_err());
         let graph: Vec<Tok> = tokenize("(a)--(b) // note", Dialect::Graph).unwrap().into_iter().map(|t| t.tok).collect();
         assert_eq!(graph.len(), 8, "{graph:?}");
+    }
+}
+
+#[cfg(test)]
+mod progress_regressions {
+    use super::*;
+    #[test]
+    fn non_identifier_unicode_is_an_error_in_both_dialects() {
+        for text in ["\u{074b}", "it, i(\u{079d}\u{074b}", "😀", "\u{200b}"] {
+            assert!(tokenize(text,Dialect::Sql).is_err());
+            assert!(tokenize(text,Dialect::Graph).is_err());
+        }
+        assert!(tokenize("SELECT '😀' FROM t",Dialect::Sql).is_ok());
+        assert!(tokenize("SELECT \"😀\" FROM t",Dialect::Sql).is_ok());
     }
 }

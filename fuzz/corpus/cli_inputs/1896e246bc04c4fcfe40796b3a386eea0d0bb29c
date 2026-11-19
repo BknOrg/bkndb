@@ -1,0 +1,1 @@
+SELECT .id = 0 OR idRE NOT (id = d OR id

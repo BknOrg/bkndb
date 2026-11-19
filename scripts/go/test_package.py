@@ -20,7 +20,7 @@ class DistributionTest(unittest.TestCase):
             'Cargo.toml': 'version = "0.3.1"\n', 'Cargo.lock': 'lock',
             'bindings/bkndb.h': 'header', 'scripts/go/package.py': 'build script',
             '.github/workflows/go.yml': 'workflow',
-            'bindings/go/bkndb/go.mod': f'module {package.MODULE_PATH}\n\ngo 1.22\n',
+            'bindings/go/bkndb/go.mod': f'module {package.MODULE_PATH}\n\ngo 1.25.0\n',
             'bindings/go/bkndb/binding_cgo.go': 'package bkndb\n',
             'bindings/go/bkndb/bkndb.h': 'header',
             'LICENSE': 'license',
@@ -45,6 +45,8 @@ class DistributionTest(unittest.TestCase):
                 'baseline': 'glibc 2.28' if platform.startswith('linux') else 'native',
                 'rustc': 'rustc 1.99.1 (fixture)',
             })
+        dest=module/'wasm';dest.mkdir();(dest/'bkndb.wasm').write_bytes(b'\0asm\x01\0\0\0')
+        package.write_json(dest/'manifest.json',{'abi':1,'version':'0.3.1','target':'wasm32-unknown-unknown','rustc':'rustc 1.99.1 (fixture)','sha256':package.digest(dest/'bkndb.wasm'),'source_fingerprint':package.fingerprint()})
         package.assemble()
 
     def record(self, platform, **updates):
@@ -109,9 +111,15 @@ class DistributionTest(unittest.TestCase):
             prefix = package.MODULE_PATH + '@v0.3.1/'
             self.assertIn(prefix + 'bkndb.h', z.namelist())
             self.assertIn(prefix + 'LICENSE', z.namelist())
+            self.assertIn(prefix + 'wasm/bkndb.wasm', z.namelist())
             for platform in package.TARGETS:
                 self.assertIn(prefix + f'lib/{platform}/libbkndb_ffi.a', z.namelist())
             self.assertFalse(any('crates/' in name for name in z.namelist()))
+
+    def test_stale_wasm_is_rejected(self):
+        (self.module/'wasm/bkndb.wasm').write_bytes(b'corrupt')
+        with self.assertRaisesRegex(ValueError,'WASM sha256'):
+            package.verify(True)
 
     def test_zip_size_limit(self):
         with patch.object(package, 'LIMIT', 8):

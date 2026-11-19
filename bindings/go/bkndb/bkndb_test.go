@@ -1,7 +1,10 @@
 package bkndb_test
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/BknOrg/bkndb/bindings/go/bkndb"
@@ -25,9 +28,9 @@ func TestOpenAndClose(t *testing.T) {
 
 	// 2. On-disk in temp directory
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.bkndb")
+	dbPath := filepath.Join(tmpDir, "nested", "test.bkndb")
 
-	diskDB, err := bkndb.Open(dbPath)
+	diskDB, err := bkndb.OpenLSM(dbPath)
 	if err != nil {
 		t.Fatalf("failed to open on-disk db: %v", err)
 	}
@@ -279,5 +282,149 @@ func TestTransactions(t *testing.T) {
 	}
 	if count, ok := res2.Rows[0][0].(float64); !ok || count != 1 {
 		t.Fatalf("expected count 1 after commit, got %v", res2.Rows[0][0])
+	}
+}
+
+func TestTransactionRetainsDatabaseUntilFinished(t *testing.T) {
+	makeTx := func() (*bkndb.Tx, error) {
+		db, e := bkndb.InMemory()
+		if e != nil {
+			return nil, e
+		}
+		if _, e = db.Exec("CREATE TABLE lifetime (id INT PRIMARY KEY)"); e != nil {
+			return nil, e
+		}
+		return db.Begin()
+	}
+	tx, e := makeTx()
+	if e != nil {
+		t.Fatal(e)
+	}
+	runtime.GC()
+	runtime.Gosched()
+	if _, e = tx.Exec("INSERT INTO lifetime VALUES (1)"); e != nil {
+		t.Fatal(e)
+	}
+	if e = tx.Commit(); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestInMemoryStatsAndDefaultVectorMetricParity(t *testing.T) {
+	db, e := bkndb.InMemory()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	stats, e := db.Stats()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if stats.Storage != nil {
+		t.Fatal("ephemeral database reported persistent storage")
+	}
+	if _, e = db.Exec("CREATE TABLE vectors (id INT PRIMARY KEY, embedding LIST)"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.Exec("INSERT INTO vectors VALUES (1,[1.0,0.0]),(2,[-1.0,0.0])"); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.CreateVectorIndex("vectors", "embedding", bkndb.VectorMetric(""), 0, 0); e != nil {
+		t.Fatal(e)
+	}
+	rows, e := db.SearchVector("vectors", "embedding", []float32{1, 0}, 1, bkndb.VectorMetric(""))
+	if e != nil || len(rows) != 1 || rows[0].Score != 1 {
+		t.Fatal(rows, e)
+	}
+}
+
+func TestLargeIntegerResultsAreLossless(t *testing.T) {
+	db, e := bkndb.InMemory()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if _, e = db.Exec("CREATE TABLE exact_numbers (id INT PRIMARY KEY, body TEXT)"); e != nil {
+		t.Fatal(e)
+	}
+	const exact = "9007199254740993"
+	if _, e = db.Exec("INSERT INTO exact_numbers VALUES (?, 'large')", json.Number(exact)); e != nil {
+		t.Fatal(e)
+	}
+	rows, e := db.SQL("SELECT id FROM exact_numbers")
+	if e != nil {
+		t.Fatal(e)
+	}
+	n, ok := rows.Rows[0][0].(json.Number)
+	if !ok || n.String() != exact {
+		t.Fatalf("integer changed: %#v", rows.Rows[0][0])
+	}
+	id, e := db.CreateNode("Exact", map[string]any{"large": json.Number(exact), "small": 7})
+	if e != nil {
+		t.Fatal(e)
+	}
+	node, e := db.GetNode(id)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if n, ok := node.Properties["large"].(json.Number); !ok || n.String() != exact {
+		t.Fatal(node.Properties)
+	}
+	if node.Properties["small"] != float64(7) {
+		t.Fatal("small-number compatibility changed")
+	}
+}
+
+func TestInvalidRawTextDoesNotExecuteATruncatedStatement(t *testing.T) {
+	db, e := bkndb.InMemory()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if _, e = db.Exec("CREATE TABLE checked_text (id INT PRIMARY KEY, body TEXT)"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.Exec("INSERT INTO checked_text VALUES (1,'bad')\x00invalid suffix"); e == nil {
+		t.Fatal("NUL-terminated prefix executed")
+	}
+	rows, e := db.SQL("SELECT * FROM checked_text")
+	if e != nil || len(rows.Rows) != 0 {
+		t.Fatal(rows, e)
+	}
+	if _, e = db.CreateNode("valid\x00truncated", nil); e == nil {
+		t.Fatal("NUL label accepted")
+	}
+	if _, e = db.CreateNode(string([]byte{0xff}), nil); e == nil {
+		t.Fatal("invalid UTF-8 accepted")
+	}
+	// Bound values travel through JSON, so valid UTF-8 containing NUL is data.
+	if _, e = db.Exec("INSERT INTO checked_text VALUES (?,?)", 2, "safe\x00value"); e != nil {
+		t.Fatal(e)
+	}
+	rows, e = db.SQL("SELECT body FROM checked_text")
+	if e != nil || rows.Rows[0][0] != "safe\x00value" {
+		t.Fatal(rows, e)
+	}
+	path := filepath.Join(t.TempDir(), "db")
+	if db, e := bkndb.OpenLSM(path + "\x00suffix"); e == nil {
+		db.Close()
+		t.Fatal("NUL path accepted")
+	}
+}
+
+func TestInvalidSearchLimitsAreRejectedBeforeDriverCalls(t *testing.T) {
+	db, e := bkndb.InMemory()
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if _, e = db.SearchText("missing", "body", "word", -1); e == nil || !strings.Contains(e.Error(), "32-bit") {
+		t.Fatal("negative limit accepted")
+	}
+	if _, e = db.SearchVector("missing", "embedding", []float32{1}, 1<<40, bkndb.MetricCosine); e == nil || !strings.Contains(e.Error(), "32-bit") {
+		t.Fatal("overflowing limit accepted")
+	}
+	if e = db.CreateVectorIndex("missing", "embedding", bkndb.MetricCosine, 1<<40, 200); e == nil || !strings.Contains(e.Error(), "32-bit") {
+		t.Fatal("overflowing index parameter accepted")
 	}
 }

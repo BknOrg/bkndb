@@ -1,10 +1,11 @@
 # bkndb-go
 
-This guide targets **BknDb 0.3.1**. Persistent databases use Redb; LSM files
+This guide targets **BknDb 0.3.1**. `Open` uses Redb by default; LSM files
 are a different format and are not automatically migrated.
 
 The Go release module includes a C header and precompiled static BknDb libraries.
-Building an application requires **Go 1.22+, CGO, and a C compiler**. Rust is only
+The default native build requires **Go 1.25+, CGO, and a C compiler**.
+The explicit WASM driver below requires Go only. Rust is only
 needed by maintainers rebuilding those libraries. The resulting executable needs
 no separate BknDb shared library, though OS system libraries may still be required.
 
@@ -19,20 +20,24 @@ merged and the `bindings/go/bkndb/v0.3.1` tag is published.
 | Platform | Supported architectures | Build requirement / minimum runtime |
 | --- | --- | --- |
 | Linux (glibc) | amd64, arm64 | GCC; glibc 2.28+ |
-| macOS | amd64, arm64 | Xcode Command Line Tools; macOS 11.0+ |
+| macOS | amd64, arm64 | Xcode Command Line Tools; Go 1.25 applications require macOS 12+ |
 | Windows | amd64 | MinGW-w64 GCC on PATH; CGO enabled |
 
 For Debian/Ubuntu install `build-essential`; for macOS run `xcode-select --install`.
 For Windows, install MSYS2's `mingw-w64-x86_64-gcc` package and add its
 `mingw64/bin` directory to PATH. In PowerShell enable CGO with
 `$env:CGO_ENABLED = "1"`, then run `go build .`. Compilers are needed on the build
-machine only, not on machines running the executable.
+machine only, not on machines running the executable. Go 1.25 CGO on Windows
+requires a compiler supporting DWARF 5; current MSYS2 MinGW-w64 provides this.
 
-The bundled Linux archive targets glibc 2.28. The final executable can require a
+The Rust archive retains macOS deployment target 11.0, but
+[Go 1.25 requires macOS 12+](https://go.dev/doc/go1.25#darwin). A newer Go toolchain
+may raise its runtime OS minimum further. The bundled Linux archive targets glibc 2.28. The final executable can require a
 newer glibc if built with a newer system C toolchain; use a matching build
 environment when deploying to older Linux systems.
 
-Alpine/musl, other architectures, and `CGO_ENABLED=0` are unsupported. CGO cross
+Alpine/musl and other architectures are outside current validation.
+`CGO_ENABLED=0` requires the explicit `bkndb_wasm` build tag and `OpenLSM`. CGO cross
 compilation requires a matching target C compiler; setting GOOS/GOARCH alone is
 not sufficient. The public Go API and Redb storage behavior are unchanged.
 
@@ -56,7 +61,8 @@ SQL parameters remain variadic (`db.SQL(query, value1, value2)`) or a single
 
 Official Go bindings for **BknDb** — Embedded hybrid graph-relational database engine with ACID transactions, BM25 full-text search, and HNSW vector similarity search.
 
-The Go wrapper uses the standard library and CGO to link the bundled static BknDb library.
+The default wrapper uses CGO to link the bundled static library. The optional
+`bkndb_wasm` driver uses wazero to run the embedded WASM module.
 
 ---
 
@@ -149,3 +155,39 @@ go test -v ./...
 ## Documentation
 
 For a comprehensive guide, architecture deep-dive, transactions, and full API reference, see [wiki-go.md](../../../docs/wikis/wiki-go.md).
+
+## Explicit LSM and CGO-free WASM
+
+This section describes unreleased working changes; an existing published tag may
+predate this implementation. Publication requires a separate unused version tag.
+
+
+Go **1.25+** is required for both drivers. `Open` continues to select Redb in the
+native CGO build. `OpenLSM("app.bkndb")` explicitly selects the independent LSM
+engine, whose file format differs from Redb. Never switch an existing database's
+backend merely because its filename ends in `.bkndb`.
+
+```bash
+CGO_ENABLED=0 go build -tags=bkndb_wasm .
+```
+
+This embeds the entire database engine, SQL, graph and search in wazero. Use
+`OpenLSM`, not `Open`, with this tag; `InMemory` is also available. No Rust, compiler
+C, shared BknDb library or separate WASM module is needed by the consumer. Supported
+targets: Linux/macOS amd64 and arm64, Windows amd64. Browser and Alpine/musl are
+outside this validation phase. The sandbox remains isolated: Go supplies bounded
+file handles rather than exposing a general guest filesystem.
+
+Default guest memory is 256 MiB. `OpenLSMWithWASMConfig` accepts a `WASMConfig` with
+`Context` and `MemoryLimitMiB`. Trap/cancellation closes the instance and resources;
+reopen and reconcile any interrupted commit. Calls to one instance are serialized.
+Data files have a `.lock` sidecar; do not remove it while a database is open.
+
+Maintainers build the embedded module with `python3 scripts/go/wasm.py build` and
+verify native–WASM interchange and an isolated Go module consumer with the
+`interchange` and `consumer` commands. Full contracts and current validation limits
+are in [the engine guide](../../../docs/LSM_ENGINE.md).
+
+Large integer values in query rows, properties and search primary keys are kept
+as `json.Number` outside ±2^53, preserving precision. Smaller numbers keep their
+existing `float64` representation. Node/edge/neighbor ID fields remain `uint64`.

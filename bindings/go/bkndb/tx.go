@@ -12,6 +12,7 @@ type Tx struct {
 	mu     sync.Mutex
 	handle uintptr
 	closed bool
+	db     *DB // Retain the database until this transaction finishes.
 }
 
 // Begin opens an explicit write transaction. Only one write transaction can be
@@ -27,7 +28,7 @@ func (db *DB) Begin() (*Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	tx := &Tx{handle: h}
+	tx := &Tx{handle: h, db: db}
 	runtime.SetFinalizer(tx, (*Tx).free)
 	return tx, nil
 }
@@ -39,11 +40,15 @@ func (tx *Tx) free() {
 		defaultDriver.freeTransaction(tx.handle)
 		tx.handle = 0
 		tx.closed = true
+		tx.db = nil
 	}
 }
 
 // SQL executes a SQL statement inside this transaction (reads see uncommitted writes).
 func (tx *Tx) SQL(query string, params ...any) (*QueryResult, error) {
+	if err := validateText(query); err != nil {
+		return nil, err
+	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if tx.closed || tx.handle == 0 {
@@ -78,7 +83,7 @@ func (tx *Tx) SQL(query string, params ...any) (*QueryResult, error) {
 		return nil, err
 	}
 	var res QueryResult
-	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+	if err := decodeResult([]byte(raw), &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -104,6 +109,7 @@ func (tx *Tx) Commit() error {
 	defaultDriver.freeTransaction(tx.handle)
 	tx.handle = 0
 	tx.closed = true
+	tx.db = nil
 	return err
 }
 
@@ -118,5 +124,6 @@ func (tx *Tx) Rollback() error {
 	defaultDriver.freeTransaction(tx.handle)
 	tx.handle = 0
 	tx.closed = true
+	tx.db = nil
 	return err
 }

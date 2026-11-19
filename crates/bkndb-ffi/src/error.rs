@@ -50,6 +50,11 @@ impl From<bkndb_core::BknError> for FfiBknError {
             }
             bkndb_core::BknError::Corruption(message) => FfiBknError::Corruption { message },
             bkndb_core::BknError::InvalidQuery(message) => FfiBknError::InvalidQuery { message },
+            bkndb_core::BknError::ResourceLimit(message) => FfiBknError::Backend { message: format!("ResourceLimit: {message}") },
+            bkndb_core::BknError::UnsupportedFormat(message) => FfiBknError::Backend { message: format!("UnsupportedFormat: {message}") },
+            bkndb_core::BknError::RecoveryRequired(message) => FfiBknError::Backend { message: format!("RecoveryRequired: {message}") },
+            bkndb_core::BknError::CommitUnknown(message) => FfiBknError::Backend { message: format!("CommitUnknown: {message}") },
+            bkndb_core::BknError::InvalidArgument(message) => FfiBknError::Backend { message: format!("InvalidArgument: {message}") },
         }
     }
 }

@@ -7,6 +7,9 @@ import (
 
 // CreateNode creates a graph node with a label and optional properties.
 func (db *DB) CreateNode(label string, props map[string]any) (uint64, error) {
+	if err := validateText(label); err != nil {
+		return 0, err
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed || db.handle == 0 {
@@ -40,7 +43,7 @@ func (db *DB) GetNode(id uint64) (*Node, error) {
 		return nil, nil
 	}
 	var node Node
-	if err := json.Unmarshal([]byte(raw), &node); err != nil {
+	if err := decodeResult([]byte(raw), &node); err != nil {
 		return nil, err
 	}
 	return &node, nil
@@ -84,6 +87,9 @@ func (db *DB) UpdateNode(id uint64, setProps map[string]any, unsetKeys ...string
 
 // CreateEdge creates a directed edge between two existing nodes.
 func (db *DB) CreateEdge(from uint64, edgeType string, to uint64, props map[string]any) (uint64, error) {
+	if err := validateText(edgeType); err != nil {
+		return 0, err
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed || db.handle == 0 {
@@ -117,7 +123,7 @@ func (db *DB) GetEdge(id uint64) (*Edge, error) {
 		return nil, nil
 	}
 	var edge Edge
-	if err := json.Unmarshal([]byte(raw), &edge); err != nil {
+	if err := decodeResult([]byte(raw), &edge); err != nil {
 		return nil, err
 	}
 	return &edge, nil
@@ -136,6 +142,9 @@ func (db *DB) DeleteEdge(id uint64) (bool, error) {
 // Neighbors returns adjacent nodes connected to nodeID in direction dir.
 // An optional edgeType filter can be provided.
 func (db *DB) Neighbors(nodeID uint64, dir Direction, edgeType ...string) ([]Neighbor, error) {
+	if err := validateText(edgeType...); err != nil {
+		return nil, err
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed || db.handle == 0 {
@@ -151,7 +160,7 @@ func (db *DB) Neighbors(nodeID uint64, dir Direction, edgeType ...string) ([]Nei
 		return nil, err
 	}
 	var list []Neighbor
-	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+	if err := decodeResult([]byte(raw), &list); err != nil {
 		return nil, err
 	}
 	return list, nil
@@ -159,6 +168,9 @@ func (db *DB) Neighbors(nodeID uint64, dir Direction, edgeType ...string) ([]Nei
 
 // GraphQuery runs a graph MATCH ... RETURN query against a database snapshot.
 func (db *DB) GraphQuery(query string, params ...any) (*QueryResult, error) {
+	if err := validateText(query); err != nil {
+		return nil, err
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed || db.handle == 0 {
@@ -193,7 +205,7 @@ func (db *DB) GraphQuery(query string, params ...any) (*QueryResult, error) {
 		return nil, err
 	}
 	var res QueryResult
-	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+	if err := decodeResult([]byte(raw), &res); err != nil {
 		return nil, err
 	}
 	return &res, nil

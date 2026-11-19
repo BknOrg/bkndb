@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE iid = 1 ORi d = 2	;

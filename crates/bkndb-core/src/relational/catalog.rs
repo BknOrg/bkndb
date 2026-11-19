@@ -187,3 +187,16 @@ fn clear_table<W: StorageWriteTx>(wtx: &mut W, table: TableSpec) -> Result<(), B
     }
     Ok(())
 }
+
+/// Rebuild secondary indexes without dropping UNIQUE or altering the schema.
+pub(crate) fn rebuild_indexes_in<W: StorageWriteTx>(wtx: &mut W, table: &str) -> Result<(), BknError> {
+    let schema = require_schema_in(wtx, table)?;
+    let rows = scan_all_in(wtx, &schema)?;
+    for row in &rows {
+        validate_row(&schema, &row.pk, &row.values)?;
+    }
+    for col in schema.indexed_columns() {
+        rebuild_index(wtx, &schema, col, &rows)?;
+    }
+    Ok(())
+}

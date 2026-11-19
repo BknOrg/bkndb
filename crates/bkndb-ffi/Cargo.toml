@@ -12,7 +12,7 @@ readme = "README.md"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
-bkndb = { path = "../bkndb", features = ["redb-backend", "mem-backend", "graph", "relational-layer", "search"] }
+bkndb = { path = "../bkndb", features = ["redb-backend", "lsm-backend", "mem-backend", "graph", "relational-layer", "search"] }
 bkndb-core = { path = "../bkndb-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

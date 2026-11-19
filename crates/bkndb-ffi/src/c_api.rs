@@ -278,6 +278,28 @@ pub unsafe extern "C" fn bkndb_open(path: *const c_char, err_out: *mut *mut c_ch
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn bkndb_open_lsm(
+    path: *const c_char,
+    err_out: *mut *mut c_char,
+) -> *mut BknDbEngine {
+    clear_err(err_out);
+    let path_str = match c_to_str(path) {
+        Some(s) => s.to_string(),
+        None => {
+            set_err(err_out, "path must not be null");
+            return std::ptr::null_mut();
+        }
+    };
+    match BknDbEngine::open_lsm(path_str) {
+        Ok(engine) => Box::into_raw(Box::new(engine)) as *mut BknDbEngine,
+        Err(e) => {
+            set_err(err_out, e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bkndb_in_memory(err_out: *mut *mut c_char) -> *mut BknDbEngine {
     clear_err(err_out);
     match BknDbEngine::in_memory() {

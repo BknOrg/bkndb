@@ -1,0 +1,8 @@
+{
+  "abi": 1,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "sha256": "691bca8c4864402f4d29d0a250c12fcfea2937e2d43331b4db0f2c60a30a17d7",
+  "source_fingerprint": "7e9f8e66da9eaf76414caa7641936298c66a6dde28c8ea202580392f800b4a91",
+  "target": "wasm32-unknown-unknown",
+  "version": "0.3.1"
+}

@@ -1,0 +1,1 @@
+SELECT *  FROM t-hHERE NOT (id = 1OR id = 0);

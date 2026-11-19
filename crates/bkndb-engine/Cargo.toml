@@ -1,0 +1,25 @@
+[package]
+name = "bkndb-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Independent transactional LSM key-value engine with portable positioned I/O"
+readme = "README.md"
+publish = false
+
+[dependencies]
+
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+crc32fast = { workspace = true }
+lz4_flex = "0.11"
+
+[dev-dependencies]
+
+tempfile = { workspace = true }
+
+[features]
+test-io = []
+fuzzing = ["test-io"]

@@ -34,6 +34,7 @@ pub(crate) fn create_edge_in<W: StorageWriteTx>(
     to: NodeId,
     properties: Properties,
 ) -> Result<EdgeId, BknError> {
+    validate_edge_type(edge_type)?;
     if wtx.get(NODES, &node_key(from))?.is_none() {
         return Err(BknError::NotFound);
     }
@@ -87,6 +88,9 @@ pub(crate) fn create_edges_bulk_in<W: StorageWriteTx>(
         .collect();
     if items.is_empty() {
         return Ok(Vec::new());
+    }
+    for (_, edge_type, _, _) in &items {
+        validate_edge_type(edge_type)?;
     }
     let start_id = reserve_ids(wtx, NEXT_EDGE_ID_KEY, items.len() as u64)?;
     let mut ids = Vec::with_capacity(items.len());
@@ -142,7 +146,7 @@ pub(crate) fn delete_node_in<W: StorageWriteTx>(wtx: &mut W, id: NodeId) -> Resu
         None => wtx.range(ADJ_OUT, Bound::Included(&start), Bound::Unbounded)?,
     };
     for (key, _) in out_rows {
-        let (_from, edge_type, to, edge_id) = decode_adj_key(&key);
+        let (_from, edge_type, to, edge_id) = decode_adj_key(&key)?;
         wtx.delete(ADJ_OUT, &key)?;
         wtx.delete(ADJ_IN, &adj_in_key(NodeId(to), &edge_type, id, edge_id))?;
         wtx.delete(EDGES, &edge_key(edge_id))?;
@@ -153,7 +157,7 @@ pub(crate) fn delete_node_in<W: StorageWriteTx>(wtx: &mut W, id: NodeId) -> Resu
         None => wtx.range(ADJ_IN, Bound::Included(&start), Bound::Unbounded)?,
     };
     for (key, _) in in_rows {
-        let (_to, edge_type, from, edge_id) = decode_adj_key(&key);
+        let (_to, edge_type, from, edge_id) = decode_adj_key(&key)?;
         wtx.delete(ADJ_IN, &key)?;
         wtx.delete(ADJ_OUT, &adj_out_key(NodeId(from), &edge_type, id, edge_id))?;
         wtx.delete(EDGES, &edge_key(edge_id))?;
@@ -221,16 +225,17 @@ pub(crate) fn neighbors_out_in<R: StorageReadTx>(
     node: NodeId,
     edge_type: &str,
 ) -> Result<Vec<(NodeId, EdgeId)>, BknError> {
+    validate_edge_type(edge_type)?;
     let start = adj_type_prefix(node, edge_type);
     let end = adj_type_upper_bound(node, edge_type);
     let rows = rtx.range(ADJ_OUT, Bound::Included(&start), Bound::Included(&end))?;
-    Ok(rows
+    rows
         .into_iter()
         .map(|(k, _)| {
-            let (_first, _edge_type, second, edge_id) = decode_adj_key(&k);
-            (NodeId(second), edge_id)
+            let (_first, _edge_type, second, edge_id) = decode_adj_key(&k)?;
+            Ok((NodeId(second), edge_id))
         })
-        .collect())
+        .collect()
 }
 
 pub(crate) fn neighbors_in_in<R: StorageReadTx>(
@@ -238,16 +243,17 @@ pub(crate) fn neighbors_in_in<R: StorageReadTx>(
     node: NodeId,
     edge_type: &str,
 ) -> Result<Vec<(NodeId, EdgeId)>, BknError> {
+    validate_edge_type(edge_type)?;
     let start = adj_type_prefix(node, edge_type);
     let end = adj_type_upper_bound(node, edge_type);
     let rows = rtx.range(ADJ_IN, Bound::Included(&start), Bound::Included(&end))?;
-    Ok(rows
+    rows
         .into_iter()
         .map(|(k, _)| {
-            let (_first, _edge_type, second, edge_id) = decode_adj_key(&k);
-            (NodeId(second), edge_id)
+            let (_first, _edge_type, second, edge_id) = decode_adj_key(&k)?;
+            Ok((NodeId(second), edge_id))
         })
-        .collect())
+        .collect()
 }
 
 pub(crate) fn neighbors_any_in<R: StorageReadTx>(
@@ -261,13 +267,13 @@ pub(crate) fn neighbors_any_in<R: StorageReadTx>(
         Some(end) => rtx.range(table, Bound::Included(&start), Bound::Excluded(&end))?,
         None => rtx.range(table, Bound::Included(&start), Bound::Unbounded)?,
     };
-    Ok(rows
+    rows
         .into_iter()
         .map(|(k, _)| {
-            let (_first, edge_type, second, edge_id) = decode_adj_key(&k);
-            (edge_type, NodeId(second), edge_id)
+            let (_first, edge_type, second, edge_id) = decode_adj_key(&k)?;
+            Ok((edge_type, NodeId(second), edge_id))
         })
-        .collect())
+        .collect()
 }
 
 pub(crate) fn top_hubs_in<R: StorageReadTx>(

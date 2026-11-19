@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE NOT--write SELECT * FOMt WHERE (id 

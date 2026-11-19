@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
+exclude = ["fuzz"]
 members = [
+    "crates/bkndb-cli",
+    "crates/bkndb-engine",
+    "crates/bkndb-wasm",
     "crates/bkndb-core",
     "crates/bkndb-storage-redb",
     "crates/bkndb-storage-mem",
@@ -27,3 +31,11 @@ tempfile = "3"
 inherits = "release"
 debug = false
 strip = "debuginfo"
+
+[profile.wasm-dist]
+inherits = "release"
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

@@ -334,3 +334,30 @@ impl From<bkndb::IntegrityReport> for FfiIntegrityReport {
         }
     }
 }
+
+impl From<bkndb::LsmStats> for FfiStorageStats {
+    fn from(s: bkndb::LsmStats) -> Self {
+        Self {
+            file_bytes: s.file_bytes,
+            sstable_count: s.sstable_count as u32,
+            legacy_sstable_count: s.legacy_sstable_count as u32,
+            sstable_bytes: s.sstable_bytes,
+            sstable_entries: s.sstable_entries,
+            memtable_entries: s.memtable_entries as u64,
+            memtable_bytes: s.memtable_bytes as u64,
+            wal_bytes: s.wal_bytes,
+            reclaimable_bytes: s.reclaimable_bytes,
+        }
+    }
+}
+impl From<bkndb::LsmIntegrityReport> for FfiIntegrityReport {
+    fn from(r: bkndb::LsmIntegrityReport) -> Self {
+        Self {
+            sstables_checked: r.sstables_checked as u32,
+            blocks_verified: r.blocks_verified,
+            legacy_blocks_unchecked: r.legacy_blocks_unchecked,
+            entries: r.entries,
+            wal_records: r.wal_records,
+        }
+    }
+}

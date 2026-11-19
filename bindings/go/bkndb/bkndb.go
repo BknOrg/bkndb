@@ -16,7 +16,25 @@ type DB struct {
 
 // Open opens or creates an embedded single-file BknDb database at path.
 func Open(path string) (*DB, error) {
+	if err := validateText(path); err != nil {
+		return nil, err
+	}
 	h, err := defaultDriver.open(path)
+	if err != nil {
+		return nil, err
+	}
+	db := &DB{handle: h}
+	runtime.SetFinalizer(db, (*DB).free)
+	return db, nil
+}
+
+// OpenLSM explicitly opens the BknDb LSM format. It does not convert Redb files.
+// With bkndb_wasm this runs the database inside wazero without CGO.
+func OpenLSM(path string) (*DB, error) {
+	if err := validateText(path); err != nil {
+		return nil, err
+	}
+	h, err := defaultDriver.openLSM(path)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +100,9 @@ func (db *DB) Compact() error {
 
 // Backup creates a point-in-time consistent backup copy at dest.
 func (db *DB) Backup(dest string) error {
+	if err := validateText(dest); err != nil {
+		return err
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed || db.handle == 0 {
@@ -102,7 +123,7 @@ func (db *DB) Stats() (*DbStats, error) {
 		return nil, err
 	}
 	var stats DbStats
-	if err := json.Unmarshal([]byte(raw), &stats); err != nil {
+	if err := decodeResult([]byte(raw), &stats); err != nil {
 		return nil, err
 	}
 	return &stats, nil
@@ -111,6 +132,9 @@ func (db *DB) Stats() (*DbStats, error) {
 // SQL executes a SQL statement. Params can be passed as positional arguments
 // (? or $1) or a map[string]any for named arguments (:name).
 func (db *DB) SQL(query string, params ...any) (*QueryResult, error) {
+	if err := validateText(query); err != nil {
+		return nil, err
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed || db.handle == 0 {
@@ -145,7 +169,7 @@ func (db *DB) SQL(query string, params ...any) (*QueryResult, error) {
 		return nil, err
 	}
 	var res QueryResult
-	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+	if err := decodeResult([]byte(raw), &res); err != nil {
 		return nil, err
 	}
 	return &res, nil

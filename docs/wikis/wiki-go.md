@@ -4,7 +4,7 @@ This guide targets **BknDb 0.3.1**. Persistent databases use Redb; LSM files
 are a different format and are not automatically migrated.
 
 The Go release module includes a C header and precompiled static BknDb libraries.
-Building an application requires **Go 1.22+, CGO, and a C compiler**. Rust is only
+Building an application requires **Go 1.25+, CGO, and a C compiler**. Rust is only
 needed by maintainers rebuilding those libraries. The resulting executable needs
 no separate BknDb shared library, though OS system libraries may still be required.
 
@@ -585,3 +585,22 @@ func main() {
 1. **Single Writer**: Do not attempt to open the same `.bkndb` file from multiple concurrent OS processes.
 2. **Explicit Close**: Always `defer db.Close()` to ensure file locks are released and buffers flushed.
 3. **Transaction Isolation**: During an active `tx := db.Begin()`, avoid running concurrent writes on the parent `db` until `tx.Commit()` or `tx.Rollback()` is called.
+
+## Pilihan LSM dan WASM
+
+This section describes unreleased working changes; an existing published tag may
+predate this implementation. Publication requires a separate unused version tag.
+
+
+`Open` tetap Redb pada driver native. Gunakan `OpenLSM` untuk format LSM.
+Dengan `CGO_ENABLED=0 go build -tags=bkndb_wasm .`, seluruh SQL/graph/search berjalan
+di wazero memakai I/O host Go. Driver ini memerlukan Go 1.25+, tanpa compiler C,
+Rust, atau file library tambahan. Memory default 256 MiB dan dapat dikonfigurasi
+melalui `OpenLSMWithWASMConfig`. File LSM memakai sidecar `.lock`; migrasi dari
+Redb atau LSM lama dilakukan ke file baru.
+
+Lihat [kontrak dan penggunaan LSM/WASM](../LSM_ENGINE.md) serta
+[status audit](../LSM_AUDIT.md). Implementasi ini belum dipromosikan menjadi default.
+
+Go 1.25 memerlukan macOS 12+; deployment target arsip Rust 11.0 tidak menurunkan
+minimum OS runtime Go. [Referensi resmi](https://go.dev/doc/go1.25#darwin).

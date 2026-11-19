@@ -3,6 +3,11 @@ use std::fmt;
 #[derive(Debug)]
 pub enum BknError {
     Backend(String),
+    ResourceLimit(String),
+    UnsupportedFormat(String),
+    RecoveryRequired(String),
+    CommitUnknown(String),
+    InvalidArgument(String),
     TableNotFound(String),
     NotFound,
     Encoding(String),
@@ -28,6 +33,11 @@ pub enum BknError {
 impl fmt::Display for BknError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            BknError::ResourceLimit(msg) => write!(f,"resource limit: {msg}"),
+            BknError::UnsupportedFormat(msg) => write!(f,"unsupported format or capability: {msg}"),
+            BknError::RecoveryRequired(msg) => write!(f,"database must be reopened: {msg}"),
+            BknError::CommitUnknown(msg) => write!(f,"commit outcome unknown; reopen and reconcile: {msg}"),
+            BknError::InvalidArgument(msg) => write!(f,"invalid argument: {msg}"),
             BknError::Backend(msg) => write!(f, "storage backend error: {msg}"),
             BknError::TableNotFound(name) => write!(f, "table not found: {name}"),
             BknError::NotFound => write!(f, "key not found"),

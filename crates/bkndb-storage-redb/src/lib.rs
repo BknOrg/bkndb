@@ -127,6 +127,57 @@ impl RedbStorageBackend {
         })
     }
 
+    /// Opens an initialized existing file; never creates a missing database.
+    pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, BknError> {
+        let path = path.as_ref().to_path_buf();
+        let db = Database::open(&path).map_err(|e| map_db_err(e, &path))?;
+        Ok(Self { path, db: RwLock::new(db), writer_lock: Mutex::new(()) })
+    }
+
+    /// Streams raw tables from one read snapshot for explicit format conversion.
+    pub fn export_to(
+        &self,
+        mut row: impl FnMut(&str, &[u8], &[u8]) -> Result<(), BknError>,
+    ) -> Result<(), BknError> {
+        let db = self
+            .db
+            .read()
+            .map_err(|_| BknError::RecoveryRequired("Redb mutex poisoned".into()))?;
+        let tx = db.begin_read().map_err(map_tx_err)?;
+        for name in tx.list_tables().map_err(map_storage_err)? {
+            let name = name.name();
+            let table = tx
+                .open_table(redb::TableDefinition::<&[u8], &[u8]>::new(name))
+                .map_err(map_table_err)?;
+            for entry in table.iter().map_err(map_storage_err)? {
+                let (key, value) = entry.map_err(map_storage_err)?;
+                row(name, key.value(), value.value())?;
+            }
+        }
+        Ok(())
+    }
+    /// Writes a bounded raw migration batch. Call only on a new destination.
+    pub fn import_batch(&self, rows: &[(String, Vec<u8>, Vec<u8>)]) -> Result<(), BknError> {
+        let _writer = self
+            .writer_lock
+            .lock()
+            .map_err(|_| BknError::RecoveryRequired("Redb writer mutex poisoned".into()))?;
+        let db = self
+            .db
+            .read()
+            .map_err(|_| BknError::RecoveryRequired("Redb mutex poisoned".into()))?;
+        let tx = db.begin_write().map_err(map_tx_err)?;
+        for (name, key, value) in rows {
+            let mut table = tx
+                .open_table(redb::TableDefinition::<&[u8], &[u8]>::new(name))
+                .map_err(map_table_err)?;
+            table
+                .insert(key.as_slice(), value.as_slice())
+                .map_err(map_storage_err)?;
+        }
+        tx.commit().map_err(map_commit_err)
+    }
+
     /// Returns the database file path.
     pub fn path(&self) -> &Path {
         &self.path

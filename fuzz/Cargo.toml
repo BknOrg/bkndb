@@ -1,0 +1,24 @@
+[package]
+name = "bkndb-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+[package.metadata]
+cargo-fuzz = true
+[dependencies]
+libfuzzer-sys = "0.4"
+bkndb-cli = {path="../crates/bkndb-cli",features=["fuzzing"]}
+bkndb-engine = {path="../crates/bkndb-engine",features=["fuzzing"]}
+[[bin]]
+name = "decoders"
+path = "fuzz_targets/decoders.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cli_inputs"
+path = "fuzz_targets/cli_inputs.rs"
+test = false
+doc = false
+bench = false

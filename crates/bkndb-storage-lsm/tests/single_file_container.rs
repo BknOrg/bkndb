@@ -15,21 +15,35 @@ fn tiny_flush_options() -> LsmOptions {
 }
 
 #[test]
-fn database_is_exactly_one_file_no_sibling_files() {
+fn database_has_one_data_file_and_a_stable_lock_sidecar() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.bkndb");
     let backend = LsmStorageBackend::open_with_options(&path, tiny_flush_options()).unwrap();
 
     for i in 0u32..20 {
         let mut w = backend.begin_write().unwrap();
-        w.put(T, &i.to_be_bytes(), format!("v{i}").as_bytes()).unwrap();
+        w.put(T, &i.to_be_bytes(), format!("v{i}").as_bytes())
+            .unwrap();
         w.commit().unwrap();
     }
 
-    assert!(path.is_file(), "the database must be a single regular file, not a directory");
+    assert!(
+        path.is_file(),
+        "the database must be a single regular file, not a directory"
+    );
 
-    let siblings: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
-    assert_eq!(siblings, vec![path.file_name().unwrap().to_owned()], "no sibling files (manifest/wal/sst) should exist alongside the single .bkndb file");
+    let mut siblings: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    siblings.sort();
+    assert_eq!(
+        siblings,
+        vec![
+            std::ffi::OsString::from("test.bkndb"),
+            std::ffi::OsString::from("test.bkndb.lock")
+        ]
+    );
 }
 
 #[test]

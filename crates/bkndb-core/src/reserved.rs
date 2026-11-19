@@ -11,7 +11,7 @@
 use crate::BknError;
 
 pub const RESERVED_TABLE_NAMES: &[&str] =
-    &["nodes", "edges", "adj_out", "adj_in", "meta", "node_labels", "node_props"];
+    &["nodes", "edges", "adj_out", "adj_in", "meta", "node_labels", "node_props", "__bkndb_cli_kv_v1"];
 
 pub fn is_reserved(name: &str) -> bool {
     RESERVED_TABLE_NAMES.contains(&name)

@@ -50,7 +50,7 @@ fn uncommitted_write_does_not_survive_reopen() {
 }
 
 #[test]
-fn corrupted_trailing_wal_frame_is_recovered_around() {
+fn corrupted_trailing_wal_requires_explicit_repair() {
     let dir = tempfile::tempdir().unwrap();
     let path = db_path(&dir);
     {
@@ -73,7 +73,13 @@ fn corrupted_trailing_wal_frame_is_recovered_around() {
         f.write_all(b"not enough bytes").unwrap();
     }
 
-    let reopened = LsmStorageBackend::open(&path).unwrap();
+    let damaged = std::fs::read(&path).unwrap();
+    assert!(LsmStorageBackend::open(&path).is_err());
+    let destination = dir.path().join("repaired.bkndb");
+    let report = LsmStorageBackend::repair_to(&path, &destination).unwrap();
+    assert!(report.discarded_wal_bytes > 0);
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
+    let reopened = LsmStorageBackend::open(&destination).unwrap();
     let r = reopened.begin_read().unwrap();
     assert_eq!(r.get(T, b"good").unwrap(), Some(b"1".to_vec()));
 }

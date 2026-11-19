@@ -64,6 +64,13 @@ if [ -f bindings/go/bkndb/lib/manifest.json ]; then
     fi
 fi
 
+if [ -f bindings/go/bkndb/wasm/manifest.json ]; then
+    WASM_VERSION=$(python3 -c 'import json; print(json.load(open("bindings/go/bkndb/wasm/manifest.json"))["version"])')
+    if [ "$WASM_VERSION" != "$TARGET_VERSION" ]; then
+        MISMATCHES+=("WASM distribution is v$WASM_VERSION (needs v$TARGET_VERSION); rebuild it")
+    fi
+fi
+
 # --- Checks ---
 # 1. Root Cargo.toml
 check_version "Cargo.toml" '^version = "[^"]+"' "workspace.package.version"

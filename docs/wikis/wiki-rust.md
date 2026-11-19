@@ -616,7 +616,7 @@ Common error variants:
 `bkndb` ships with multiple built-in engines implementing the `StorageBackend` trait:
 - **Redb (`RedbStorageBackend`)**: Default on-disk engine, battle-tested ACID B-tree in a single file with fast point lookups and MVCC reads.
 - **Memory (`MemoryStorageBackend`)**: In-memory ephemeral engine, zero disk I/O, ideal for tests and ephemeral caches.
-- **LSM (`LsmStorageBackend`)**: Optional engine (`feature = "lsm-backend"`), single-file WAL + memtable + compressed SSTables.
+- **LSM (`LsmStorageBackend`)**: Optional engine (`feature = "lsm-backend"`), one data file plus a stable lock sidecar; checked WAL, memtable and compressed SSTables.
 
 To implement a new backend, implement `StorageBackend` (`Send + Sync`),
 `StorageReadTx`, and `StorageWriteTx`. This skeleton assumes custom transaction
@@ -711,3 +711,7 @@ db.write_tx(|b| {
 ## License
 
 Licensed under the Apache License, Version 2.0 (see [LICENSE](../../LICENSE)).
+
+The independent, unpublished `bkndb-engine` crate and explicit LSM v3 migration,
+repair, durability and WASM contracts are described in the
+[engine guide](../LSM_ENGINE.md). Redb remains the default.

@@ -58,6 +58,25 @@ impl<B: StorageBackend> RelationalDb<B> {
         Self { backend }
     }
 
+    /// Visits validated rows from one snapshot without collecting the table.
+    /// Callback errors stop the scan; this does not validate derived indexes
+    /// or uniqueness across rows.
+    pub fn scan_rows<E: From<BknError>>(
+        &self,
+        name: &str,
+        mut visit: impl FnMut(Row) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let tx=self.backend.begin_read().map_err(E::from)?;
+        let schema=crate::relational::catalog::require_schema_in(&tx,name).map_err(E::from)?;
+        for entry in tx.scan(schema.base_table(),Bound::Unbounded,Bound::Unbounded).map_err(E::from)? {
+            let (key,bytes)=entry.map_err(E::from)?;
+            let row=Row {pk:decode_sortable(schema.primary_key_column().kind,&key).map_err(E::from)?,values:decode_row(&bytes).map_err(E::from)?};
+            validate_row(&schema,&row.pk,&row.values).map_err(|e|E::from(BknError::Corruption(format!("invalid stored row: {e}"))))?;
+            visit(row)?;
+        }
+        Ok(())
+    }
+
     /// A handle on the table described by `schema` (a `&RelSchema` static or
     /// a [`TableSchema`]); the table doesn't have to be registered in the
     /// catalog.
@@ -130,6 +149,13 @@ impl<B: StorageBackend> RelationalDb<B> {
                 .build()?;
             catalog::ensure_table_in(wtx, &schema)
         })
+    }
+
+    /// Rebuilds every secondary index of a registered table, checking UNIQUE
+    /// constraints without changing the stored schema. Search indexes are
+    /// managed separately through the full-text/vector APIs.
+    pub fn rebuild_indexes(&self, table: &str) -> Result<(), BknError> {
+        self.write(|wtx| catalog::rebuild_indexes_in(wtx, table))
     }
 
     /// Removes a secondary index (and any UNIQUE constraint relying on it).

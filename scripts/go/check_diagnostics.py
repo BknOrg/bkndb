@@ -15,6 +15,7 @@ for settings in (
     env = os.environ.copy()
     env.pop('GOOS', None)
     env.pop('GOARCH', None)
+    env.pop("GOFLAGS", None)
     env.update(settings)
     env['GOWORK'] = 'off'
     result = subprocess.run(['go', 'build', '.'], cwd=module, env=env,
@@ -23,3 +24,8 @@ for settings in (
     if result.returncode == 0 or 'BknDb_requires_CGO_ENABLED_1' not in result.stdout:
         raise SystemExit('Expected the explicit CGO/platform diagnostic')
 print('Build diagnostics: OK')
+
+env=os.environ.copy();env.update(CGO_ENABLED='0',GOOS='linux',GOARCH='386',GOWORK='off')
+result=subprocess.run(['go','build','-tags=bkndb_wasm','.'],cwd=module,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+if result.returncode==0 or 'BknDb_WASM_requires_' not in result.stdout:raise SystemExit('Expected explicit WASM/platform diagnostic')
+print('Unsupported WASM platform: OK')

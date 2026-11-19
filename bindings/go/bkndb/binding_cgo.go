@@ -1,4 +1,4 @@
-//go:build cgo && ((linux && !android && (amd64 || arm64)) || (darwin && !ios && (amd64 || arm64)) || (windows && amd64))
+//go:build !bkndb_wasm && cgo && ((linux && !android && (amd64 || arm64)) || (darwin && !ios && (amd64 || arm64)) || (windows && amd64))
 
 package bkndb
 
@@ -37,6 +37,21 @@ func (d *cgoDriver) open(path string) (uintptr, error) {
 	var cErr *C.char
 
 	engine := C.bkndb_open(cPath, &cErr)
+	if err := checkCgoErr(cErr); err != nil {
+		return 0, err
+	}
+	if engine == nil {
+		return 0, errors.New("failed to open database")
+	}
+	return uintptr(unsafe.Pointer(engine)), nil
+}
+
+func (d *cgoDriver) openLSM(path string) (uintptr, error) {
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	var cErr *C.char
+
+	engine := C.bkndb_open_lsm(cPath, &cErr)
 	if err := checkCgoErr(cErr); err != nil {
 		return 0, err
 	}

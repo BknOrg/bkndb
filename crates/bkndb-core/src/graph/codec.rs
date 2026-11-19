@@ -12,8 +12,8 @@
 //!   key (not in a value) is encoded with `to_be_bytes()`, independent of
 //!   whatever `bincode` does for values.
 
-use crate::graph::model::{EdgeId, NodeId};
 use crate::TableSpec;
+use crate::graph::model::{EdgeId, NodeId};
 
 pub const NODES: TableSpec = TableSpec("nodes");
 pub const EDGES: TableSpec = TableSpec("edges");
@@ -60,6 +60,15 @@ fn encode_edge_type(t: &str) -> Vec<u8> {
     out.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
     out.extend_from_slice(bytes);
     out
+}
+
+pub(crate) fn validate_edge_type(t: &str) -> Result<(), crate::BknError> {
+    if t.len() > u16::MAX as usize {
+        return Err(crate::BknError::InvalidArgument(
+            "edge type exceeds 65535 UTF-8 bytes".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// adj_out key = from(8) ++ len(2) ++ edge_type(len) ++ to(8) ++ edge_id(8).
@@ -115,14 +124,21 @@ pub fn adj_type_upper_bound(first: NodeId, edge_type: &str) -> Vec<u8> {
 /// (first_id, edge_type, second_id, edge_id). Field names are physical, not
 /// semantic — callers know from which table they read whether `first` means
 /// `from` or `to`.
-pub fn decode_adj_key(key: &[u8]) -> (u64, String, u64, EdgeId) {
-    let first = u64::from_be_bytes(key[0..8].try_into().unwrap());
+pub fn decode_adj_key(key: &[u8]) -> Result<(u64, String, u64, EdgeId), crate::BknError> {
+    let corrupt = || crate::BknError::Corruption("malformed graph adjacency key".into());
+    if key.len() < 26 {
+        return Err(corrupt());
+    }
     let len = u16::from_be_bytes(key[8..10].try_into().unwrap()) as usize;
-    let edge_type = String::from_utf8(key[10..10 + len].to_vec()).expect("edge_type is valid utf8");
+    if key.len() != 26 + len {
+        return Err(corrupt());
+    }
+    let first = u64::from_be_bytes(key[0..8].try_into().unwrap());
+    let edge_type = String::from_utf8(key[10..10 + len].to_vec()).map_err(|_| corrupt())?;
     let off = 10 + len;
     let second = u64::from_be_bytes(key[off..off + 8].try_into().unwrap());
     let edge_id = u64::from_be_bytes(key[off + 8..off + 16].try_into().unwrap());
-    (first, edge_type, second, EdgeId(edge_id))
+    Ok((first, edge_type, second, EdgeId(edge_id)))
 }
 
 #[cfg(test)]
@@ -132,11 +148,25 @@ mod tests {
     #[test]
     fn adj_key_roundtrip() {
         let key = adj_out_key(NodeId(42), "calls", NodeId(7), EdgeId(1001));
-        let (first, edge_type, second, edge_id) = decode_adj_key(&key);
+        let (first, edge_type, second, edge_id) = decode_adj_key(&key).unwrap();
         assert_eq!(first, 42);
         assert_eq!(edge_type, "calls");
         assert_eq!(second, 7);
         assert_eq!(edge_id, EdgeId(1001));
+    }
+
+    #[test]
+    fn corrupt_adjacency_lengths_and_utf8_are_errors() {
+        let key = adj_out_key(NodeId(1), "edge", NodeId(2), EdgeId(3));
+        for length in 0..key.len() {
+            assert!(decode_adj_key(&key[..length]).is_err());
+        }
+        let mut trailing = key.clone();
+        trailing.push(0);
+        assert!(decode_adj_key(&trailing).is_err());
+        let mut invalid_utf8 = key;
+        invalid_utf8[10] = 255;
+        assert!(decode_adj_key(&invalid_utf8).is_err());
     }
 
     #[test]

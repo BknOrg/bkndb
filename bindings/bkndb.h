@@ -48,6 +48,7 @@ void bkndb_free_transaction(BknDbTransaction *tx);
  * Returns NULL on error and populates `err_out`.
  */
 BknDbEngine *bkndb_open(const char *path, char **err_out);
+BknDbEngine *bkndb_open_lsm(const char *path, char **err_out);
 
 /**
  * Creates an in-memory database instance.

@@ -87,6 +87,17 @@ if (Test-Path $goManifest) {
     }
 }
 
+$wasmManifest = "$WorkspaceRoot/bindings/go/bkndb/wasm/manifest.json"
+if (Test-Path $wasmManifest) {
+    $wasmVersion = (Get-Content $wasmManifest -Raw | ConvertFrom-Json).version
+    if ($wasmVersion -ne $TargetVersion) {
+        $mismatches += [PSCustomObject]@{
+            File = "bindings/go/bkndb/wasm/manifest.json"
+            Expected = $TargetVersion; Found = $wasmVersion; Description = "WASM distribution (rebuild required)"
+        }
+    }
+}
+
 # --- Checks ---
 # 1. Root Cargo.toml
 Check-Version -FilePath "Cargo.toml" -Pattern 'version\s*=\s*"([^"]+)"' -Description "workspace.package.version"

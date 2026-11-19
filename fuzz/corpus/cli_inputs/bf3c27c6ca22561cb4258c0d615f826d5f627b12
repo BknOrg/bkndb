@@ -1,0 +1,1 @@
+SELECT id = 1 OR idRE NOT (id = 1 OR id = 2);

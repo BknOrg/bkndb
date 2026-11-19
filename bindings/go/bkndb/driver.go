@@ -6,6 +6,7 @@ var defaultDriver driver
 // driver is the internal interface implemented by the statically linked CGO driver.
 type driver interface {
 	open(path string) (uintptr, error)
+	openLSM(path string) (uintptr, error)
 	inMemory() (uintptr, error)
 	close(handle uintptr) error
 	isClosed(handle uintptr) bool

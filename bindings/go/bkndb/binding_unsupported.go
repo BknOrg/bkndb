@@ -1,4 +1,4 @@
-//go:build !cgo || !((linux && !android && (amd64 || arm64)) || (darwin && !ios && (amd64 || arm64)) || (windows && amd64))
+//go:build !bkndb_wasm && (!cgo || !((linux && !android && (amd64 || arm64)) || (darwin && !ios && (amd64 || arm64)) || (windows && amd64)))
 
 package bkndb
 

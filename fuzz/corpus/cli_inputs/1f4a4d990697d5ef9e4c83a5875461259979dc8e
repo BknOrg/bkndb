@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE indendexid = 1 ORixid = 1 ORi d = 2	;

@@ -42,6 +42,7 @@ def fingerprint():
     paths += [p for p in (ROOT / 'crates').rglob('*')
               if p.is_file() and p.suffix in ('.rs', '.toml', '.udl', '.h', '.c')]
     paths += list(MODULE.glob('*.go')) + [MODULE / 'go.mod']
+    paths += [p for p in (ROOT/'scripts/go/wasm.py', MODULE/'go.sum') if p.exists()]
     h = hashlib.sha256()
     for p in sorted(set(paths), key=lambda item: item.relative_to(ROOT).as_posix()):
         h.update(p.relative_to(ROOT).as_posix().encode() + b'\0')
@@ -124,6 +125,8 @@ def verify(require_all=False):
     if not records:
         raise ValueError('No static archives; run package.py build <platform>')
     if require_all:
+        import wasm
+        wasm.verify(release=True)
         manifest = json.loads((MODULE / 'lib/manifest.json').read_text())
         if manifest != {'version': version(), 'source_fingerprint': expected, 'targets': records}:
             raise ValueError('Distribution manifest is stale; run package.py assemble')
@@ -145,9 +148,10 @@ def assemble():
 def module_zip(proxy):
     """Use a strict file allowlist; no source-tree Rust files or symlinks enter the ZIP."""
     files = [p for p in MODULE.rglob('*') if p.is_file() and (
-        (p.parent == MODULE and (p.suffix in ('.go', '.h', '.md') or p.name == 'go.mod'))
+        (p.parent == MODULE and (p.suffix in ('.go', '.h', '.md') or p.name in ('go.mod','go.sum')))
         or (p.parent == MODULE / 'example' and p.suffix == '.go')
-        or (p.is_relative_to(MODULE / 'lib') and p.suffix in ('.a', '.json')))]
+        or (p.is_relative_to(MODULE / 'lib') and p.suffix in ('.a', '.json'))
+        or (p.parent == MODULE/'wasm' and p.name in ('bkndb.wasm','manifest.json')))]
     # The repository license also belongs in the nested module's distribution.
     license_path = ROOT / 'LICENSE'
     entries = [(p, p.relative_to(MODULE).as_posix()) for p in files]
@@ -203,15 +207,20 @@ def runtime_path(env, windows):
     return str(Path(root) / 'System32')
 
 
-def consumer():
-    verify()
+def consumer(wasm=False):
+    if not wasm: verify()
     with tempfile.TemporaryDirectory(prefix='bkndb-consumer-') as directory:
         base = Path(directory).resolve()
         proxy = base / 'proxy'
-        v = module_zip(proxy)
+        # Stage dependencies before isolating the consumer. Its private module
+        # cache is populated ONLY through this local proxy, including wazero.
+        run(['go','mod','download','all'],cwd=MODULE)
+        cache=Path(run(['go','env','GOMODCACHE'],capture_output=True).stdout.strip())/'cache/download'
+        shutil.copytree(cache,proxy,dirs_exist_ok=True)
+        v=module_zip(proxy)
         work = base / 'consumer'
         work.mkdir()
-        (work / 'go.mod').write_text(f'module consumer\n\ngo 1.22\n\nrequire {MODULE_PATH} {v}\n')
+        (work / 'go.mod').write_text(f'module consumer\n\ngo 1.25.0\n\nrequire {MODULE_PATH} {v}\n')
         (work / 'main.go').write_text('''package main
 import (
     "fmt"
@@ -234,16 +243,20 @@ func main() {
     must(db.Close()); fmt.Println("static consumer OK")
 }
 ''')
+        if wasm:
+            source=work/'main.go'; source.write_text(source.read_text().replace('b.Open(', 'b.OpenLSM('))
         env = os.environ.copy()
         for name in ('LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'CGO_LDFLAGS', 'CGO_CFLAGS',
                      'GOFLAGS', 'GOOS', 'GOARCH'):
             env.pop(name, None)
-        env.update(GOPROXY=proxy.as_uri(), GOSUMDB='off', GOWORK='off', CGO_ENABLED='1',
+        env.update(GOPROXY=proxy.as_uri(), GOSUMDB='off', GOWORK='off',
+                   GOPRIVATE='', GONOPROXY='none', GOVCS='*:off', GOTOOLCHAIN='local',
+                   CGO_ENABLED='0' if wasm else '1',
                    GOMODCACHE=str(base / 'modcache'), GOCACHE=str(base / 'gocache'))
         run(['go', 'get', MODULE_PATH + '@' + v], cwd=work, env=env)
-        run(['go', 'test', MODULE_PATH + '/...'], cwd=work, env=env)
+        run(['go', 'test'] + (['-tags=bkndb_wasm'] if wasm else []) + [MODULE_PATH + '/...'], cwd=work, env=env)
         binary = work / ('smoke.exe' if os.name == 'nt' else 'smoke')
-        run(['go', 'build', '-buildvcs=false', '-o', str(binary), '.'], cwd=work, env=env)
+        run(['go', 'build'] + (['-tags=bkndb_wasm'] if wasm else []) + ['-buildvcs=false', '-o', str(binary), '.'], cwd=work, env=env)
         check_binary(binary)
         clean = base / 'runtime'
         clean.mkdir()

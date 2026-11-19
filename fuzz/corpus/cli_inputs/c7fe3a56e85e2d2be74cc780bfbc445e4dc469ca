@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE NTOi( d = 1 OR id = 2);

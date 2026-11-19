@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "coderecall": {
+      "args": [
+        "mcp",
+        "--repo",
+        "/home/bknorg/Repos/bkndb"
+      ],
+      "command": "/home/bknorg/.local/bin/coderecall"
+    }
+  }
+}

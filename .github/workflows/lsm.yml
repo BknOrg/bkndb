@@ -1,0 +1,80 @@
+name: LSM correctness and stability gates
+on:
+  pull_request:
+    paths: ['crates/**', 'fuzz/**', 'Cargo.*', '.github/workflows/lsm.yml']
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      soak:
+        description: 'Run continuous eight-hour soak on a self-hosted bkndb-soak runner'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  correctness:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-gnu
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+          targets: ${{ matrix.target }}
+      - uses: msys2/setup-msys2@v2
+        id: msys
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys.outputs.msys2-location }}
+        run: '"$env:MSYS2_ROOT\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+      - run: cargo test --locked --release --target '${{ matrix.target }}' -p bkndb-engine --features test-io
+      - run: cargo test --locked --release --target '${{ matrix.target }}' -p bkndb-storage-lsm
+      - run: cargo test --locked --release --target '${{ matrix.target }}' -p bkndb --features lsm-backend --test migration
+      - run: cargo test --locked --release --target '${{ matrix.target }}' -p bkndb-engine --test model million_operations -- --ignored --nocapture
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-11-16
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run decoders -- -max_total_time=60 -timeout=5 -max_len=1048576 -rss_limit_mb=1024
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lsm-fuzz-corpus
+          path: |
+            fuzz/corpus
+            fuzz/artifacts
+  soak:
+    if: github.event_name == 'workflow_dispatch' && inputs.soak
+    # GitHub-hosted jobs cannot run for eight continuous hours. This label must
+    # point to a provisioned runner with enough disk, memory and runtime budget.
+    runs-on: [self-hosted, bkndb-soak]
+    timeout-minutes: 600
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked --release -p bkndb-engine --test model eight_hour_soak -- --ignored --nocapture

@@ -119,6 +119,7 @@ impl<B: StorageBackend> Drop for Worker<B> {
 
 pub(crate) enum TxWorker {
     Disk(Worker<RedbStorageBackend>),
+    Lsm(Worker<bkndb::LsmStorageBackend>),
     Mem(Worker<MemoryStorageBackend>),
 }
 
@@ -169,6 +170,7 @@ impl BknDbTransaction {
             }
             (commit, _) => match worker {
                 TxWorker::Disk(w) => w.finish(commit),
+                TxWorker::Lsm(w) => w.finish(commit),
                 TxWorker::Mem(w) => w.finish(commit),
             },
         };
@@ -191,6 +193,7 @@ macro_rules! in_tx {
             let guard = $self.worker.lock().unwrap_or_else(|e| e.into_inner());
             match guard.as_ref() {
                 Some(TxWorker::Disk(w)) => w.run(move |$b| $body),
+                Some(TxWorker::Lsm(w)) => w.run(move |$b| $body),
                 Some(TxWorker::Mem(w)) => w.run(move |$b| $body),
                 None => Err(FfiBknError::TransactionClosed),
             }

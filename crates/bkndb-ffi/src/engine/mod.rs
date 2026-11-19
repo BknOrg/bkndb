@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
-use bkndb::{MemoryStorageBackend, RedbStorageBackend};
+use bkndb::{LsmStorageBackend, MemoryStorageBackend, RedbStorageBackend};
 use bkndb_core::graph::{Direction, EdgeId, NodeId};
 use bkndb_core::relational::{Agg, Query, TableSchema, VectorIndexOptions, VectorSearchOptions};
 use bkndb_core::Db;
@@ -23,6 +23,7 @@ use crate::types::{
 
 enum Backend {
     Disk(Db<RedbStorageBackend>),
+    Lsm(Db<LsmStorageBackend>),
     Mem(Db<MemoryStorageBackend>),
 }
 
@@ -33,6 +34,7 @@ macro_rules! with_db {
         let guard = $self.inner.read().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(Backend::Disk($db)) => ($body).map_err(FfiBknError::from),
+            Some(Backend::Lsm($db)) => ($body).map_err(FfiBknError::from),
             Some(Backend::Mem($db)) => ($body).map_err(FfiBknError::from),
             None => Err(FfiBknError::DatabaseClosed),
         }
@@ -90,6 +92,12 @@ impl BknDbEngine {
         Ok(Self::wrap(Backend::Disk(Db::new(RedbStorageBackend::open(path)?))))
     }
 
+    /// Explicitly opens the LSM format. Redb files are never converted implicitly.
+    #[uniffi::constructor]
+    pub fn open_lsm(path: String) -> Result<Arc<Self>,FfiBknError> {
+        Ok(Self::wrap(Backend::Lsm(Db::new(LsmStorageBackend::open(path)?))))
+    }
+
     /// Like [`BknDbEngine::open`], accepting [`FfiLsmOptions`] for backward
     /// compatibility with generated multi-language bindings.
     #[uniffi::constructor]
@@ -126,6 +134,7 @@ impl BknDbEngine {
         let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(Backend::Disk(db)) => Ok(db.backend().force_compact()?),
+            Some(Backend::Lsm(db)) => Ok(db.backend().force_compact()?),
             Some(Backend::Mem(_)) => Ok(()),
             None => Err(FfiBknError::DatabaseClosed),
         }
@@ -138,6 +147,7 @@ impl BknDbEngine {
         let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(Backend::Disk(db)) => Ok(db.backend().backup_to(dest)?),
+            Some(Backend::Lsm(db)) => Ok(db.backend().backup_to(dest)?),
             Some(Backend::Mem(_)) => Err(FfiBknError::InvalidArgument {
                 message: "backup needs an on-disk database; this one is in memory".to_string(),
             }),
@@ -151,6 +161,7 @@ impl BknDbEngine {
         let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let (logical, storage) = match guard.as_ref() {
             Some(Backend::Disk(db)) => (db.stats()?, Some(db.backend().stats()?.into())),
+            Some(Backend::Lsm(db)) => (db.stats()?, Some(db.backend().stats()?.into())),
             Some(Backend::Mem(db)) => (db.stats()?, None),
             None => return Err(FfiBknError::DatabaseClosed),
         };
@@ -168,6 +179,7 @@ impl BknDbEngine {
         let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             Some(Backend::Disk(db)) => Ok(db.backend().verify_integrity()?.into()),
+            Some(Backend::Lsm(db)) => Ok(db.backend().verify_integrity()?.into()),
             Some(Backend::Mem(_)) => Ok(bkndb::IntegrityReport::default().into()),
             None => Err(FfiBknError::DatabaseClosed),
         }
@@ -218,6 +230,7 @@ impl BknDbEngine {
             let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
             match guard.as_ref() {
                 Some(Backend::Disk(db)) => Worker::start(db.clone()).map(TxWorker::Disk),
+                Some(Backend::Lsm(db)) => Worker::start(db.clone()).map(TxWorker::Lsm),
                 Some(Backend::Mem(db)) => Worker::start(db.clone()).map(TxWorker::Mem),
                 None => Err(FfiBknError::DatabaseClosed),
             }

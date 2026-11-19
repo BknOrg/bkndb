@@ -125,7 +125,7 @@ Coordinates the entire release pipeline:
 ```
 
 
-## 4. Go Static Module Distribution
+## 4. Go Native and WASM Module Distribution
 
 Go publishing is a separate, explicit workflow; `publish_all` continues to publish
 Rust and Python only. The Go submodule has no version field in `go.mod`: its
@@ -139,7 +139,7 @@ version comes from tag `bindings/go/bkndb/v0.3.1`.
    macOS amd64/arm64 with deployment target 11.0, and Windows amd64 using
    `x86_64-pc-windows-gnu` and MinGW-w64. Rust is pinned to 1.99.1.
 3. Review and merge the generated `codex/go-distribution-0.3.1` PR. It contains
-   ordinary Git blobs for all five static archives plus per-target build records
+   ordinary Git blobs for all five static archives, the WASM module and its manifest, plus per-target build records
    and a combined manifest. GitHub Actions must be allowed to create pull requests
    in repository settings. The job that opens this PR has contents/PR write
    permissions; ordinary build jobs have read-only contents access.
@@ -159,10 +159,14 @@ permitted; only a separate BknDb shared library is forbidden.
 
 ### Local development and verification
 
-Python 3.9+, Rust, Go and a native C compiler are required by maintainers:
+Python 3.9+, Rust, Go 1.25+ and a native C compiler are required by maintainers:
 
 ```bash
 rustup target add x86_64-unknown-linux-gnu
+rustup target add wasm32-unknown-unknown
+python3 scripts/go/wasm.py build
+python3 scripts/go/wasm.py interchange
+python3 scripts/go/wasm.py consumer
 python3 scripts/go/package.py build linux_amd64
 python3 scripts/go/package.py verify
 python3 scripts/go/package.py consumer
@@ -205,3 +209,46 @@ If tag publication loses its response after GitHub accepted the push, rerun the
 publication workflow. It reconciles remote state and succeeds when the tag points
 to the validated commit. It never force-pushes a tag. After a public tag exists,
 source fixes require a new patch version, such as 0.3.2.
+
+
+### LSM/WASM validation before promotion
+
+The portable module must be rebuilt from the same input fingerprint as native
+archives. CI distributes it to all five platform jobs, which test native CGO and
+CGO-free WASM separately. The distribution PR includes `wasm/bkndb.wasm` and
+`wasm/manifest.json`; module ZIP validation includes them and `go.sum`. A consumer
+uses a private module cache fed only by a local proxy, including wazero's pinned
+dependencies. WASM source or protocol changes invalidate the distribution.
+
+LSM stability is a separate decision from packaging success. The eight-hour
+continuous soak requires a provisioned self-hosted `bkndb-soak` runner; it is
+never replaced by short CI runs or assumed to have passed. See
+[acceptance status](../../docs/LSM_AUDIT.md). These working changes do not publish
+anything or modify existing version tags. Choose an unused version for a future
+publication if 0.3.1 is already public; never retarget that tag.
+
+### Native CLI candidates
+
+The separate `bkndb-cli` crate builds the `bkndb` executable directly from the
+Rust libraries. It is currently `publish = false`; installation from the registry
+is not available. Use `cargo install --locked --path crates/bkndb-cli` from the
+complete checkout, or a reviewed native candidate executable.
+
+Prepare five native candidates with `.github/workflows/cli.yml`. Candidate
+manifests record checksums, source fingerprints and toolchain versions; failed
+preparation can be rerun without changing the workspace version or creating tags.
+The source fingerprint also covers engine CI and fuzz inputs. Source changes
+invalidate earlier evidence, even when no version number changes.
+
+Run `python3 scripts/cli/candidate.py validate --directory EVIDENCE` after collecting
+the five candidates and matching engine/fuzz/audit/eight-hour-soak reports. The
+soak must identify the exact tested executable. Validation is fail-closed and
+does not publish, create tags, or authenticate handwritten reports: retain and
+review the underlying logs. Stable CLI publication waits for all three phases
+and engine qualification, as requested by the maintainer.
+
+Before any future `cargo install bkndb-cli` release, choose unused package
+versions, add registry versions to path-only dependencies, and publish required
+engine/adapter/library dependencies in dependency order. That release preparation
+is separate from implementation and must not retarget existing versions. See
+[the CLI guide](../../docs/CLI.md) for commands, limits and remaining gates.

@@ -4,13 +4,15 @@ use std::sync::Arc;
 use crate::graph::codec::{
     ADJ_IN, ADJ_OUT, EDGES, META, NEXT_EDGE_ID_KEY, NEXT_NODE_ID_KEY, NODES, adj_in_key,
     adj_out_key, adj_type_prefix, adj_type_upper_bound, decode_adj_key, edge_key, next_node_prefix,
-    node_key,
+    node_key, validate_edge_type,
 };
 use crate::graph::index;
 use crate::graph::model::{EdgeId, EdgeRecord, NodeId, NodeRecord, PropValue, Properties};
 use crate::{BknError, StorageBackend, StorageReadTx, StorageWriteTx};
 
 mod ops;
+mod integrity;
+pub use integrity::GraphIntegrityReport;
 
 pub(crate) use ops::*;
 
@@ -42,7 +44,8 @@ pub(crate) fn reserve_ids<W: StorageWriteTx>(
         ),
         None => 1,
     };
-    wtx.put(META, counter_key, &(current + count).to_be_bytes())?;
+    let next = current.checked_add(count).ok_or_else(|| BknError::ResourceLimit("graph ID space exhausted".into()))?;
+    wtx.put(META, counter_key, &next.to_be_bytes())?;
     Ok(current)
 }
 

@@ -34,6 +34,10 @@ jobs:
         run: rm -rf bindings/go/bkndb/lib
       - uses: actions/download-artifact@v4
         with:
+          name: go-wasm
+          path: bindings/go/bkndb/wasm
+      - uses: actions/download-artifact@v4
+        with:
           pattern: go-static-*
           path: /tmp/go-static
       - name: Assemble all platforms
@@ -55,9 +59,10 @@ jobs:
           title: 'Package static Go distribution v${{ env.VERSION }}'
           commit-message: 'Package static Go distribution v${{ env.VERSION }}'
           body: |
-            Packages five tested static archives from the workflow source revision.
+            Packages the portable WASM module and five tested static archives from the workflow source revision.
             Merge this PR before running the Publish Go module tag workflow.
             Release validation rejects archives whose source fingerprint is stale.
           add-paths: |
+            bindings/go/bkndb/wasm
             bindings/go/bkndb/lib
             bindings/go/bkndb/bkndb.h

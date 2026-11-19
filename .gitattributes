@@ -1,0 +1,4 @@
+# Regression inputs are byte-sensitive, even when they happen to resemble text.
+fuzz/corpus/** -text -diff
+bindings/go/bkndb/lib/*/*.a -text -diff
+bindings/go/bkndb/wasm/*.wasm -text -diff

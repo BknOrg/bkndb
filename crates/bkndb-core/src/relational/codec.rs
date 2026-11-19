@@ -64,7 +64,15 @@ pub(crate) fn encode_table_def(def: &TableDef) -> Result<Vec<u8>, BknError> {
 
 pub(crate) fn decode_table_def(bytes: &[u8]) -> Result<TableDef, BknError> {
     match bytes.split_first() {
-        Some((&CATALOG_VERSION, rest)) => bincode::deserialize(rest).map_err(|e| BknError::Encoding(e.to_string())),
+        Some((&CATALOG_VERSION, rest)) => {
+            let def: TableDef = bincode::deserialize(rest).map_err(|e| BknError::Encoding(e.to_string()))?;
+            // Persisted definitions bypass the normal builder on load. Validate
+            // structural invariants before methods can assume a valid PK/index.
+            // Keep the original definition for legacy static-schema encodings.
+            TableSchema::from_def(def.clone()).to_builder().build()
+                .map_err(|e| BknError::Corruption(format!("invalid stored schema: {e}")))?;
+            Ok(def)
+        },
         Some((v, _)) => Err(BknError::Encoding(format!("unsupported catalog entry version {v}"))),
         None => Err(BknError::Encoding("empty catalog entry".to_string())),
     }
@@ -249,7 +257,8 @@ fn indexed_value_len(kind: ColumnKind, key: &[u8]) -> Result<usize, BknError> {
 /// suffix, decoded via `pk_kind`.
 pub fn pk_from_index_key(indexed_kind: ColumnKind, pk_kind: ColumnKind, key: &[u8]) -> Result<PropValue, BknError> {
     let split = indexed_value_len(indexed_kind, key)?;
-    decode_sortable(pk_kind, &key[split..])
+    let pk = key.get(split..).ok_or_else(|| BknError::Corruption("truncated secondary index key".into()))?;
+    decode_sortable(pk_kind, pk)
 }
 
 /// Converts a value-level range bound into a byte-level bound over index
@@ -305,6 +314,14 @@ pub fn decode_row(bytes: &[u8]) -> Result<Properties, BknError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncated_secondary_index_keys_return_errors() {
+        for (kind, bytes) in [(ColumnKind::Int, vec![0; 7]),
+            (ColumnKind::Timestamp, vec![0; 7]), (ColumnKind::Uuid, vec![0; 15])] {
+            assert!(pk_from_index_key(kind, ColumnKind::Int, &bytes).is_err());
+        }
+    }
 
     #[test]
     fn int_sortable_encoding_preserves_numeric_order() {

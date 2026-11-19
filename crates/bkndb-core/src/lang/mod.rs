@@ -136,7 +136,19 @@ pub(crate) struct Cursor<'s> {
 
 impl<'s> Cursor<'s> {
     pub fn new(src: &'s str, dialect: lexer::Dialect) -> Result<Self, BknError> {
-        Ok(Self { src, toks: lexer::tokenize(src, dialect)?, pos: 0, next_positional: 0 })
+        let toks=lexer::tokenize(src, dialect)?;
+        let mut depth=0usize;
+        let mut not_count=0usize;
+        if toks.len()>200_000 {return Err(BknError::ResourceLimit("query exceeds 200000 tokens".into()));}
+        for token in &toks {
+            match &token.tok {
+                Tok::Sym("("|"["|"{")=>{depth+=1;if depth>64{return Err(BknError::ResourceLimit("query nesting exceeds 64".into()));}},
+                Tok::Sym(")"|"]"|"}")=>depth=depth.saturating_sub(1),
+                Tok::Ident(word) if word.eq_ignore_ascii_case("NOT")=>{not_count+=1;if not_count>128{return Err(BknError::ResourceLimit("query exceeds 128 NOT operators".into()));}},
+                _=>(),
+            }
+        }
+        Ok(Self { src, toks, pos: 0, next_positional: 0 })
     }
 
     pub fn peek(&self) -> Option<&Tok> {
@@ -392,5 +404,61 @@ impl<'s> Cursor<'s> {
         } else {
             Err(self.err("unexpected input after the end of the statement"))
         }
+    }
+}
+
+/// Splits a SQL script using the same lexer as statement parsing. Quoted
+/// delimiters and comments are handled exactly as they are for a single query.
+pub fn split_sql_script(source: &str) -> Result<Vec<&str>, BknError> {
+    let tokens = lexer::tokenize(source, lexer::Dialect::Sql)?;
+    let mut statements = Vec::new();
+    let mut start = 0;
+    let mut has_tokens = false;
+    for token in tokens {
+        if token.tok == lexer::Tok::Sym(";") {
+            if has_tokens { statements.push(source[start..token.pos].trim()); }
+            start = token.pos + 1;
+            has_tokens = false;
+        } else { has_tokens = true; }
+    }
+    if has_tokens { statements.push(source[start..].trim()); }
+    Ok(statements)
+}
+
+/// Whether the last SQL token is a statement delimiter (ignoring comments).
+pub fn sql_script_is_terminated(source: &str) -> Result<bool, BknError> {
+    Ok(lexer::tokenize(source, lexer::Dialect::Sql)?.last().is_some_and(|t|t.tok == lexer::Tok::Sym(";")))
+}
+
+/// Shell transaction controls; these are not additional SQL engine statements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionControl { Begin, Commit, Rollback }
+pub fn sql_transaction_control(source: &str) -> Result<Option<TransactionControl>, BknError> {
+    let tokens=lexer::tokenize(source, lexer::Dialect::Sql)?;
+    let meaningful:Vec<_>=tokens.iter().filter(|t|t.tok!=lexer::Tok::Sym(";")).collect();
+    if meaningful.len()!=1{return Ok(None)}
+    if let lexer::Tok::Ident(word)=&meaningful[0].tok {
+        return Ok(match word.to_ascii_uppercase().as_str(){"BEGIN"=>Some(TransactionControl::Begin),"COMMIT"=>Some(TransactionControl::Commit),"ROLLBACK"=>Some(TransactionControl::Rollback),_=>None});
+    }
+    Ok(None)
+}
+
+#[cfg(all(test,feature="relational"))]
+mod script_tests {
+    use super::*;
+    #[test]
+    fn script_boundaries_follow_lexer(){
+        let s="-- ; ignored\nSELECT 'a;b' FROM t; /* ; */ SELECT 2 FROM t; -- tail";
+        assert_eq!(split_sql_script(s).unwrap().len(),2);
+        assert!(sql_script_is_terminated(s).unwrap());
+        assert_eq!(sql_transaction_control("/* c */ BEGIN; -- tail").unwrap(),Some(TransactionControl::Begin));
+        assert_eq!(sql_transaction_control("BEGIN; COMMIT;").unwrap(),None);
+    }
+    #[test]
+    fn excessive_recursion_is_rejected_before_ast_allocation(){
+        let nested=format!("SELECT * FROM t WHERE {}id = 1", "NOT ".repeat(10000));
+        assert!(matches!(sql::parse(&nested),Err(BknError::ResourceLimit(_))));
+        let nested=format!("SELECT * FROM t WHERE {}id = 1{}", "(".repeat(1000),")".repeat(1000));
+        assert!(matches!(sql::parse(&nested),Err(BknError::ResourceLimit(_))));
     }
 }

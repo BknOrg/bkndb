@@ -29,7 +29,36 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '11.0'
 
 jobs:
+  wasm:
+    name: Build portable WASM module
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - run: python3 scripts/go/wasm.py build
+      - name: Fuzz the guest ABI
+        working-directory: bindings/go/bkndb
+        env:
+          CGO_ENABLED: '0'
+        run: go test -tags=bkndb_wasm -fuzz=FuzzWASMABI -fuzztime=60s .
+      - run: python3 scripts/go/wasm.py interchange
+      - run: python3 scripts/go/wasm.py consumer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-wasm
+          path: bindings/go/bkndb/wasm/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
   test:
+    needs: wasm
     name: Static Go (${{ matrix.platform }})
     strategy:
       fail-fast: false
@@ -63,10 +92,9 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: '1.25.x'
           cache: false
       - name: Install Rust
-        if: runner.os != 'Linux'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.99.1'
@@ -84,6 +112,10 @@ jobs:
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: '"$env:MSYS2_ROOT\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-wasm
+          path: bindings/go/bkndb/wasm
       - name: Remove previously packaged archives
         run: python -c 'import shutil; shutil.rmtree("bindings/go/bkndb/lib", ignore_errors=True)'
       - name: Build Linux archive with glibc 2.28
@@ -104,6 +136,15 @@ jobs:
       - name: Test bindings
         working-directory: bindings/go/bkndb
         run: go test -v ./...
+      - name: Test native-WASM file interchange and locking
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/bkndb-interchange
+        run: python scripts/go/wasm.py interchange
+      - name: Test CGO-free WASM bindings on this platform
+        working-directory: bindings/go/bkndb
+        env:
+          CGO_ENABLED: '0'
+        run: go test -tags=bkndb_wasm ./...
       - name: Test isolated module consumer and executable imports
         run: python scripts/go/package.py consumer
       - name: Check disabled CGO and unsupported-platform diagnostics
@@ -119,7 +160,7 @@ jobs:
 
   distribution-check:
     name: Validate complete Go distribution
-    needs: test
+    needs: [test, wasm]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -128,8 +169,12 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: '1.25.x'
           cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-wasm
+          path: bindings/go/bkndb/wasm
       - uses: actions/download-artifact@v4
         with:
           pattern: go-static-*
